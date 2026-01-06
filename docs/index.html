@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="description" content="VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms">
+    <meta name="keywords" content="Motion Planning, Multi-Robot Arms, Collision Checking, SIMD">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VAMP-MR</title>
+
+    <link href="https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro" rel="stylesheet">
+
+    <link rel="stylesheet" href="./static/css/bulma.min.css">
+    <link rel="stylesheet" href="./static/css/bulma-carousel.min.css">
+    <link rel="stylesheet" href="./static/css/bulma-slider.min.css">
+    <link rel="stylesheet" href="./static/css/fontawesome.all.min.css">
+    <link rel="stylesheet" href="./static/css/index.css">
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script defer src="./static/js/fontawesome.all.min.js"></script>
+    <script src="./static/js/bulma-carousel.min.js"></script>
+    <script src="./static/js/bulma-slider.min.js"></script>
+    <script src="./static/js/index.js"></script>
+
+    <link rel="icon" href="./resources/shortcut.png">
+
+    <meta property="og:site_name" content="VAMP-MR" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="VAMP-MR" />
+    <meta property="og:description" content="Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms" />
+    <meta property="og:url" content="https://vamp-mr.github.io/vamp-mr/" />
+    <meta property="og:image" content="https://vamp-mr.github.io/vamp-mr/resources/vamp_approximation.png" />
+  </head>
+
+  <body>
+    <section class="hero">
+      <div class="hero-body">
+        <div class="container">
+          <div class="columns is-centered">
+            <div class="column has-text-centered">
+              <h1 class="title is-1 publication-title">VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms</h1>
+              <div class="is-size-5 publication-authors">
+                <span class="author-block">
+                  Philip Huang<sup>1</sup>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                  Chenrui Gao<sup>2</sup>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+                  Jiaoyang Li<sup>1</sup>
+                  <br />
+                  <sup>1</sup>Carnegie Mellon University&nbsp;&nbsp;&nbsp;&nbsp;
+                  <sup>2</sup>University of Michigan
+                </span>
+              </div>
+
+              <div class="column has-text-centered">
+                <div class="publication-links">
+                  <span class="link-block">
+                    <a href="https://github.com/vamp-mr/vamp-mr"
+                      class="external-link button is-normal is-rounded is-dark">
+                      <span class="icon">
+                        <i class="fab fa-github"></i>
+                      </span>
+                      <span>Code</span>
+                    </a>
+                  </span>
+
+                  <span class="link-block">
+                    <a href="#citation"
+                      class="external-link button is-normal is-rounded is-dark">
+                      <span class="icon">
+                        <i class="fas fa-quote-right"></i>
+                      </span>
+                      <span>BibTeX</span>
+                    </a>
+                  </span>
+
+                  <span class="link-block">
+                    <a href="#" onclick="return false;"
+                      class="external-link button is-normal is-rounded is-light">
+                      <span class="icon">
+                        <i class="fas fa-file-alt"></i>
+                      </span>
+                      <span>Paper (coming soon)</span>
+                    </a>
+                  </span>
+                </div>
+              </div>
+
+              <div class="column has-text-centered">
+                <div class="content is-size-6" style="margin-top: 0.5rem">
+                  <a href="#abstract">Abstract</a> ·
+                  <a href="#collision-checking">Collision Checking</a> ·
+                  <a href="#planning">Planning</a> ·
+                  <a href="#shortcutting">Shortcutting</a> ·
+                  <a href="#lego-assembly">LEGO Assembly</a> ·
+                  <a href="#code">Code</a> ·
+                  <a href="#citation">Citation</a>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="hero teaser">
+      <div class="container is-max-desktop">
+        <div class="hero-body">
+          <figure class="image">
+            <img src="./resources/vamp_approximation.png" alt="Vectorized multi-robot collision checking speedup and illustration." />
+          </figure>
+          <p class="has-text-centered is-size-6" style="margin-top: 0.75rem">
+            Figure 1: vectorized multi-robot collision checking achieves up to ~100× motion-validation speedup.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column is-four-fifths">
+            <h2 class="title is-3" id="abstract">Abstract</h2>
+            <div class="content has-text-justified">
+              <p>
+                Multi-robot-arm motion planning is a key challenge in deploying multiple manipulators for industrial tasks such as manufacturing.
+                Existing search-based and sampling-based solvers often require significant computation time to produce collision-free, high-quality motions suitable for safe execution.
+                In this work, we introduce a new suite of multi-robot-arm motion planners capable of near real-time motion generation, combining classical planning algorithms with state-of-the-art vectorized collision-checking techniques.
+                Based on CPU SIMD instructions, our new planners remove motion validation as the primary bottleneck and achieve up to two orders of magnitude speedup in both motion planning and execution postprocessing for multi-arm manipulation tasks.
+                We also release the implementation of our vector-accelerated multi-robot planning and execution algorithms, and we believe this will lower the barrier for research and development of multi-robot arm planning and manipulation problems.
+              </p>
+              <p>
+                Project repo: <a href="https://github.com/vamp-mr/vamp-mr">https://github.com/vamp-mr/vamp-mr</a>
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column is-four-fifths">
+            <h2 class="title is-3" id="collision-checking">Vectorized Multi-Robot Collision Checking</h2>
+            <div class="content has-text-justified">
+              <p>
+                VAMP-MR makes motion validation fast: CPU-SIMD vectorized forward kinematics and collision checking enable high-throughput evaluation over batches of multi-robot configurations.
+              </p>
+            </div>
+            <div class="columns is-variable is-4 is-multiline">
+              <div class="column is-two-thirds">
+                <p class="content has-text-justified">
+                  Table 1 (paper): average runtime over 10,000 random samples. “Single” checks a single set of multi-robot configurations; “Motion” validates a motion segment between two configurations.
+                </p>
+                <div class="table-container">
+                  <table class="table is-fullwidth is-striped is-hoverable is-size-7 result-table">
+                    <thead>
+                      <tr>
+                        <th>Check</th>
+                        <th>Environment</th>
+                        <th class="has-text-right">FCL (μs)</th>
+                        <th class="has-text-right">Ours (μs)</th>
+                        <th class="has-text-right">Speedup</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td rowspan="3"><strong>Single</strong></td>
+                        <td>Panda 2-Rod</td>
+                        <td class="has-text-right">100.99</td>
+                        <td class="has-text-right">8.60</td>
+                        <td class="has-text-right"><strong>11.7×</strong></td>
+                      </tr>
+                      <tr>
+                        <td>Panda 4</td>
+                        <td class="has-text-right">206.53</td>
+                        <td class="has-text-right">15.01</td>
+                        <td class="has-text-right"><strong>13.7×</strong></td>
+                      </tr>
+                      <tr>
+                        <td>Panda 4-Bins</td>
+                        <td class="has-text-right">382.63</td>
+                        <td class="has-text-right">13.70</td>
+                        <td class="has-text-right"><strong>27.9×</strong></td>
+                      </tr>
+                      <tr>
+                        <td rowspan="3"><strong>Motion</strong></td>
+                        <td>Panda 2-Rod</td>
+                        <td class="has-text-right">3936.13</td>
+                        <td class="has-text-right">36.03</td>
+                        <td class="has-text-right"><strong>109.2×</strong></td>
+                      </tr>
+                      <tr>
+                        <td>Panda 4</td>
+                        <td class="has-text-right">4836.50</td>
+                        <td class="has-text-right">32.61</td>
+                        <td class="has-text-right"><strong>148.3×</strong></td>
+                      </tr>
+                      <tr>
+                        <td>Panda 4-Bins</td>
+                        <td class="has-text-right">930.03</td>
+                        <td class="has-text-right">14.23</td>
+                        <td class="has-text-right"><strong>65.4×</strong></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="column">
+                <figure class="image">
+                  <img src="./resources/envs.png" alt="Evaluated multi-robot motion planning environments." />
+                </figure>
+                <p class="has-text-centered is-size-7" style="margin-top: 0.5rem">
+                  Evaluated environments: Panda 2-Rod, Panda 4, Panda 4-Bins.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column is-four-fifths">
+            <h2 class="title is-3" id="planning">Planning</h2>
+            <div class="content has-text-justified">
+              <p>
+                Vectorized motion validation accelerates both composite RRT-Connect and CBS-style multi-robot planning across the benchmark environments.
+              </p>
+            </div>
+            <figure class="image">
+              <img src="./resources/planning_time_boxplots.png" alt="Planning time comparison plot." />
+            </figure>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column is-four-fifths">
+            <h2 class="title is-3" id="shortcutting">Shortcutting</h2>
+            <div class="content has-text-justified">
+              <p>
+                Postprocessing is collision-checking heavy. Vectorized validation yields faster convergence for multi-robot shortcutting while matching solution quality.
+              </p>
+            </div>
+            <figure class="image">
+              <img src="./resources/vamp_runtime_comparison.png" alt="Shortcutting makespan improvement over time." />
+            </figure>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column is-four-fifths">
+            <h2 class="title is-3" id="lego-assembly">LEGO Assembly</h2>
+            <div class="content has-text-justified">
+              <p>
+                We evaluate long-horizon dual-arm LEGO assembly tasks (APEX-MR pipeline) and measure runtime across task assignment, motion planning, and TPG construction.
+              </p>
+            </div>
+
+            <div class="columns is-variable is-4 is-multiline">
+              <div class="column is-half">
+                <figure class="image">
+                  <img src="./resources/lego_robot_env.png" alt="Dual-arm LEGO assembly environment and tasks." />
+                </figure>
+                <figure class="image" style="margin-top: 0.75rem">
+                  <img src="./resources/tpg.png" alt="Temporal plan graph (TPG) illustration." />
+                </figure>
+              </div>
+              <div class="column is-half">
+                <p class="content has-text-justified">
+                  Table (paper): runtime and final makespan with and without vector acceleration (averaged over 4 seeds).
+                </p>
+                <div class="table-container">
+                  <table class="table is-fullwidth is-striped is-hoverable is-size-7 result-table">
+                    <thead>
+                      <tr>
+                        <th>Metric</th>
+                        <th class="has-text-right">Cliff</th>
+                        <th class="has-text-right">Vessel</th>
+                        <th class="has-text-right">RSS</th>
+                        <th class="has-text-right">Chair</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>TPG Shortcut Time (s)</td>
+                        <td class="has-text-right">1.0</td>
+                        <td class="has-text-right">1.0</td>
+                        <td class="has-text-right">5.0</td>
+                        <td class="has-text-right">5.0</td>
+                      </tr>
+                      <tr>
+                        <td colspan="5"><em>FCL-Based</em></td>
+                      </tr>
+                      <tr>
+                        <td>Task Assignment (s)</td>
+                        <td class="has-text-right">0.60</td>
+                        <td class="has-text-right">4.90</td>
+                        <td class="has-text-right">14.5</td>
+                        <td class="has-text-right">13.0</td>
+                      </tr>
+                      <tr>
+                        <td>Motion Planning (s)</td>
+                        <td class="has-text-right">0.63</td>
+                        <td class="has-text-right">0.76</td>
+                        <td class="has-text-right">8.99</td>
+                        <td class="has-text-right">9.98</td>
+                      </tr>
+                      <tr>
+                        <td>TPG Construction (s)</td>
+                        <td class="has-text-right">9.88</td>
+                        <td class="has-text-right">25.6</td>
+                        <td class="has-text-right">43.0</td>
+                        <td class="has-text-right">817.2</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Total Time (s)</strong></td>
+                        <td class="has-text-right"><strong>12.1</strong></td>
+                        <td class="has-text-right"><strong>32.2</strong></td>
+                        <td class="has-text-right"><strong>71.5</strong></td>
+                        <td class="has-text-right"><strong>845.2</strong></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Final Makespan (s)</strong></td>
+                        <td class="has-text-right"><strong>185</strong></td>
+                        <td class="has-text-right"><strong>397</strong></td>
+                        <td class="has-text-right"><strong>741</strong></td>
+                        <td class="has-text-right"><strong>2180</strong></td>
+                      </tr>
+
+                      <tr>
+                        <td colspan="5"><em>Ours</em></td>
+                      </tr>
+                      <tr>
+                        <td>Task Assignment (s)</td>
+                        <td class="has-text-right">0.55</td>
+                        <td class="has-text-right">4.68</td>
+                        <td class="has-text-right">13.6</td>
+                        <td class="has-text-right">10.2</td>
+                      </tr>
+                      <tr>
+                        <td>Motion Planning (s)</td>
+                        <td class="has-text-right">0.42</td>
+                        <td class="has-text-right">0.15</td>
+                        <td class="has-text-right">7.27</td>
+                        <td class="has-text-right">0.88</td>
+                      </tr>
+                      <tr>
+                        <td>TPG Construction (s)</td>
+                        <td class="has-text-right">1.42</td>
+                        <td class="has-text-right">2.55</td>
+                        <td class="has-text-right">5.34</td>
+                        <td class="has-text-right">43.22</td>
+                      </tr>
+                      <tr>
+                        <td><strong>Total Time (s)</strong></td>
+                        <td class="has-text-right"><strong>3.39</strong></td>
+                        <td class="has-text-right"><strong>8.38</strong></td>
+                        <td class="has-text-right"><strong>31.2</strong></td>
+                        <td class="has-text-right"><strong>59.3</strong></td>
+                      </tr>
+                      <tr>
+                        <td><strong>Final Makespan (s)</strong></td>
+                        <td class="has-text-right"><strong>159</strong></td>
+                        <td class="has-text-right"><strong>340</strong></td>
+                        <td class="has-text-right"><strong>542</strong></td>
+                        <td class="has-text-right"><strong>2146</strong></td>
+                      </tr>
+                      <tr>
+                        <td># of Bricks</td>
+                        <td class="has-text-right">11</td>
+                        <td class="has-text-right">36</td>
+                        <td class="has-text-right">47</td>
+                        <td class="has-text-right">258</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column is-four-fifths">
+            <h2 class="title is-3" id="code">Code</h2>
+            <div class="content has-text-justified">
+              <p>
+                The main repository is <a href="https://github.com/vamp-mr/vamp-mr">vamp-mr/vamp-mr</a>. For convenience, this repo also includes snapshots of related packages:
+              </p>
+              <ul>
+                <li><a href="https://github.com/vamp-mr/vamp-mr/tree/main/vamp">vamp/</a> (VAMP library)</li>
+                <li><a href="https://github.com/vamp-mr/vamp-mr/tree/main/mr_planner_core">mr_planner_core/</a></li>
+                <li><a href="https://github.com/vamp-mr/vamp-mr/tree/main/mr_planner_lego">mr_planner_lego/</a></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="citation">
+      <div class="container is-max-desktop">
+        <div class="columns is-centered">
+          <div class="column is-four-fifths">
+            <h2 class="title is-3">Citation</h2>
+            <div class="content has-text-justified">
+              <p>For now, please cite the project website (workshop attribution can be updated later).</p>
+            </div>
+            <pre><code>@misc{vamp_mr_website,
+  title        = {VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms},
+  author       = {Huang, Philip and Gao, Chenrui and Li, Jiaoyang},
+  howpublished = {\url{https://github.com/vamp-mr/vamp-mr}},
+  note         = {AAAI 2026 Workshop on Multi-Agent Path Finding (WoMAPF), project website},
+  year         = {2026}
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="content has-text-centered">
+          <p>
+            Website template adapted from a Nerfies-style academic project page. Hosted via GitHub Pages.
+          </p>
+        </div>
+      </div>
+    </footer>
+
+  </body>
+</html>
