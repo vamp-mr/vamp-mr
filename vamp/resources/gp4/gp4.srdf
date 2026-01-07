@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Semantic description for a single Yaskawa GP4 arm -->
+<robot name="gp4">
+    <group name="arm">
+        <chain base_link="base_link" tip_link="link_tool"/>
+    </group>
+
+    <group_state name="ready_pose" group="arm">
+        <joint name="joint_1" value="0"/>
+        <joint name="joint_2" value="0"/>
+        <joint name="joint_3" value="0"/>
+        <joint name="joint_4" value="0"/>
+        <joint name="joint_5" value="-1.2058"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+
+    <group_state name="push" group="arm">
+        <joint name="joint_1" value="0"/>
+        <joint name="joint_2" value="0.6326"/>
+        <joint name="joint_3" value="0.3538"/>
+        <joint name="joint_4" value="-0.0965"/>
+        <joint name="joint_5" value="-1.2759"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+
+    <group_state name="push_up" group="arm">
+        <joint name="joint_1" value="0"/>
+        <joint name="joint_2" value="-0.4098"/>
+        <joint name="joint_3" value="0"/>
+        <joint name="joint_4" value="0"/>
+        <joint name="joint_5" value="-0.9743"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+
+    <group_state name="push_down" group="arm">
+        <joint name="joint_1" value="-0.725"/>
+        <joint name="joint_2" value="1.1599"/>
+        <joint name="joint_3" value="0"/>
+        <joint name="joint_4" value="0"/>
+        <joint name="joint_5" value="0.9183"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+
+    <group_state name="forward" group="arm">
+        <joint name="joint_1" value="-0.29"/>
+        <joint name="joint_2" value="1.4499"/>
+        <joint name="joint_3" value="1.0149"/>
+        <joint name="joint_4" value="0"/>
+        <joint name="joint_5" value="0.9303"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+
+    <group_state name="rotated" group="arm">
+        <joint name="joint_1" value="-1"/>
+        <joint name="joint_2" value="0"/>
+        <joint name="joint_3" value="0"/>
+        <joint name="joint_4" value="0"/>
+        <joint name="joint_5" value="0"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+
+    <group_state name="random1" group="arm">
+        <joint name="joint_1" value="-0.0719"/>
+        <joint name="joint_2" value="-0.0719"/>
+        <joint name="joint_3" value="0.0719"/>
+        <joint name="joint_4" value="0.9772"/>
+        <joint name="joint_5" value="-0.9353"/>
+        <joint name="joint_6" value="-0.2158"/>
+    </group_state>
+
+    <group_state name="random2" group="arm">
+        <joint name="joint_1" value="-0.21"/>
+        <joint name="joint_2" value="0.26"/>
+        <joint name="joint_3" value="0"/>
+        <joint name="joint_4" value="0.42"/>
+        <joint name="joint_5" value="0"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+
+    <group_state name="random3" group="arm">
+        <joint name="joint_1" value="0.1862"/>
+        <joint name="joint_2" value="0.28"/>
+        <joint name="joint_3" value="0.05"/>
+        <joint name="joint_4" value="0.77"/>
+        <joint name="joint_5" value="-1.22"/>
+        <joint name="joint_6" value="-0.9075"/>
+    </group_state>
+
+    <disable_collisions link1="base_link" link2="link_1" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="link_2" reason="Never"/>
+    <disable_collisions link1="fts" link2="link_3" reason="Never"/>
+    <disable_collisions link1="fts" link2="link_5" reason="Default"/>
+    <disable_collisions link1="fts" link2="link_6" reason="Adjacent"/>
+    <disable_collisions link1="fts" link2="link_tool" reason="Adjacent"/>
+    <disable_collisions link1="link_1" link2="link_2" reason="Adjacent"/>
+    <disable_collisions link1="link_1" link2="link_3" reason="Never"/>
+    <disable_collisions link1="link_2" link2="link_3" reason="Adjacent"/>
+    <disable_collisions link1="link_3" link2="link_4" reason="Adjacent"/>
+    <disable_collisions link1="link_3" link2="link_5" reason="Never"/>
+    <disable_collisions link1="link_3" link2="link_6" reason="Never"/>
+    <disable_collisions link1="link_3" link2="link_tool" reason="Never"/>
+    <disable_collisions link1="link_4" link2="link_5" reason="Adjacent"/>
+    <disable_collisions link1="link_4" link2="link_tool" reason="Never"/>
+    <disable_collisions link1="link_5" link2="link_6" reason="Adjacent"/>
+    <disable_collisions link1="link_5" link2="link_tool" reason="Never"/>
+    <disable_collisions link1="link_6" link2="link_tool" reason="Never"/>
+</robot>

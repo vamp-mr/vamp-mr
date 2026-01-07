@@ -12,5 +12,4 @@ Project page + code for the paper:
 - `vamp/`: modified VAMP codebase used by the paper
 - `mr_planner_core/`: multi-robot planner core package
 - `mr_planner_lego/`: LEGO-specific integration / examples
-- `SNAPSHOT_MANIFEST.md`: provenance for the snapshots
 

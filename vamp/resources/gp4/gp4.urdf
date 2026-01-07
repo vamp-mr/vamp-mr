@@ -1,0 +1,415 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot 
+  name="Yaskawa_gp4" xmlns:xacro="http://ros.org/wiki/xacro"> 
+  
+  <link name = "world"/>
+
+  <joint name = "world_fixed"
+    type = "fixed">
+    <parent link = "world" />
+    <child link = "base" />
+  </joint>
+
+  <!-- ROS-Industrial 'base' frame: base_link to gp4 World Coordinates transform -->
+    <link name="base" />
+    <joint name="base_link-base" type="fixed">
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <parent link="base"/>
+      <child link="base_link"/>
+    </joint>
+
+    <!-- links: main serial chain -->
+    <link name="base_link">
+     <inertial>
+      <origin
+        xyz="-0.073983 0.00022734 0.13031"
+        rpy="0 0 0" />
+      <mass
+        value="42.212" />
+      <inertia
+        ixx="0.64296"
+        ixy="0.0012624"
+        ixz="-0.068804"
+        iyy="1.2709"
+        iyz="-0.0010754"
+        izz="1.3497" />
+    </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="gp4/base_link.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="gp4/base_link.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="link_1">
+    <inertial>
+      <origin
+        xyz="0.058962 0.24363 -0.018725"
+        rpy="0 0 0" />
+      <mass
+        value="37.265" />
+      <inertia
+        ixx="0.95018"
+        ixy="-0.14402"
+        ixz="-0.064915"
+        iyy="1.0578"
+        iyz="0.037699"
+        izz="1.094" />
+    </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="gp4/link_1.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="gp4/link_1.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="link_2">
+    <inertial>
+      <origin
+        xyz="3.5083E-05 0.39008 0.15036"
+        rpy="0 0 0" />
+      <mass
+        value="22.632" />
+      <inertia
+        ixx="1.7745"
+        ixy="-0.0054743"
+        ixz="0.00063015"
+        iyy="0.15511"
+        iyz="-0.09224"
+        izz="1.826" />
+    </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="gp4/link_2.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="gp4/link_2.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="link_3">
+    <inertial>
+      <origin
+        xyz="0.086423 0.14427 -0.035793"
+        rpy="0 0 0" />
+      <mass
+        value="28.467" />
+      <inertia
+        ixx="0.65771"
+        ixy="-0.13627"
+        ixz="-0.026219"
+        iyy="0.52683"
+        iyz="0.051956"
+        izz="0.69722" />
+    </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="gp4/link_3.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="gp4/link_3.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="link_4">
+    <inertial>
+      <origin
+        xyz="0.37337 0.00033491 0.012656"
+        rpy="0 0 0" />
+      <mass
+        value="7.629" />
+      <inertia
+        ixx="0.018151"
+        ixy="-0.00033527"
+        ixz="-0.031589"
+        iyy="0.48072"
+        iyz="3.3917E-05"
+        izz="0.47647" />
+    </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="gp4/link_4.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="gp4/link_4.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="link_5">
+    <inertial>
+      <origin
+        xyz="0.062818 3.3289E-05 0.0048991"
+        rpy="0 0 0" />
+      <mass
+        value="2.5794" />
+      <inertia
+        ixx="0.015161"
+        ixy="-2.4835E-06"
+        ixz="0.0016647"
+        iyy="0.021382"
+        iyz="-2.248E-06"
+        izz="0.013473" />
+    </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="gp4/link_5.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="gp4/link_5.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="link_6">
+    <inertial>
+      <origin
+        xyz="0.00015982 -0.00063018 -0.008266"
+        rpy="0 0 0" />
+      <mass
+        value="0.10811" />
+      <inertia
+        ixx="9.0129E-05"
+        ixy="-1.0891E-08"
+        ixz="9.1598E-09"
+        iyy="9.2026E-05"
+        iyz="-2.749E-07"
+        izz="0.00017818" />
+    </inertial>
+      <visual>
+        <geometry>
+          <mesh filename="gp4/link_6.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="gp4/link_6.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="fts">
+      <collision>
+        <origin xyz="0 0 0" rpy=" 0 0 0"/>
+        <geometry>
+          <cylinder length="0.0505" radius="0.035"/>
+        </geometry>
+      </collision>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder length="0.0505" radius="0.035"/>
+        </geometry>
+      </visual>
+      <inertial>
+        <mass value="1e-5" />
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+      </inertial>
+    </link>
+    <!-- <link name="link_mountplate">
+    <inertial>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <mass
+        value="0.10811" />
+      <inertia
+        ixx="9.0129E-05"
+        ixy="-1.0891E-08"
+        ixz="9.1598E-09"
+        iyy="9.2026E-05"
+        iyz="-2.749E-07"
+        izz="0.00017818" />
+    </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="eoat/D405_mount.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="eoat/D405_mount.stl"/>
+        </geometry>
+      </collision>
+    </link>
+    <link name="link_precam">
+      <inertial>
+        <mass value="1e-5" />
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+      </inertial>
+    </link>
+    <link name="link_camera">
+    <inertial>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <mass
+        value="0.10811" />
+      <inertia
+        ixx="9.0129E-05"
+        ixy="-1.0891E-08"
+        ixz="9.1598E-09"
+        iyy="9.2026E-05"
+        iyz="-2.749E-07"
+        izz="0.00017818" />
+    </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="eoat/D405.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="eoat/D405.stl"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="link_camera_origin">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.0001 0.002 0.001"/>
+      </geometry>
+    </visual>
+      <inertial>
+        <mass value="1e-5" />
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6" />
+      </inertial>
+    </link> -->
+    <link name="link_tool">
+    <inertial>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <mass
+        value="0.10811" />
+      <inertia
+        ixx="9.0129E-05"
+        ixy="-1.0891E-08"
+        ixz="9.1598E-09"
+        iyy="9.2026E-05"
+        iyz="-2.749E-07"
+        izz="0.00017818" />
+    </inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="eoat/tool_with_cam_gen35.stl"/>
+        </geometry>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="eoat/tool_with_cam_gen35.stl"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- joints: main serial chain -->
+    <joint name="joint_1" type="revolute">
+      <parent link="base_link"/>
+      <child link="link_1"/>
+      <origin xyz="0 0 0.330" rpy="0 0 0" />
+      <axis xyz="0 0 1" />
+      <limit effort="200" lower="-2.9670597283903604" upper="2.9670597283903604" velocity="2" />
+    </joint>
+    <joint name="joint_2" type="revolute">
+      <parent link="link_1"/>
+      <child link="link_2"/>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <axis xyz="0 1 0" />
+      <limit effort="200" lower="-1.9198621771937625" upper="2.2689280275926285" velocity="2" />
+    </joint>
+    <joint name="joint_3" type="revolute">
+      <parent link="link_2"/>
+      <child link="link_3"/>
+      <origin xyz="0 0 0.260" rpy="0 0 0" />
+      <axis xyz="0 -1 0" />
+     <limit effort="200" lower="-1.1344640137963142" upper="3.490658503988659" velocity="2" />
+    </joint>
+    <joint name="joint_4" type="revolute">
+      <parent link="link_3"/>
+      <child link="link_4"/>
+      <origin xyz="0.290 0 0.015" rpy="0 0 0" />
+      <axis xyz="-1 0 0" />
+      <limit effort="200" lower="-3.490658503988659" upper="3.490658503988659" velocity="2" />
+    </joint>
+    <joint name="joint_5" type="revolute">
+      <parent link="link_4"/>
+      <child link="link_5"/>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <axis xyz="0 -1 0" />
+		<limit effort="200" lower="-1.98968" upper="1.98968" velocity="2"></limit>
+    </joint>
+    <joint name="joint_6" type="revolute">
+      <parent link="link_5"/>
+      <child link="link_6"/>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <axis xyz="-1 0 0" />
+      <limit effort="200" lower="-7.941248096574199" upper="7.941248096574199" velocity="2" />
+    </joint>
+
+    <link name="flange"/>
+    <joint name="joint_6_t-flange" type="fixed">
+      <origin xyz="0.072 0 0" rpy="0 0 0"/>
+      <parent link="link_6"/>
+      <child link="flange"/>
+    </joint>
+
+    <joint name="link_6_fts" type="fixed">
+      <origin rpy="0 1.5707963267948966 0" xyz="0.02525 0 0"/>
+      <parent link="flange" />
+      <child link="fts" />
+    </joint>
+
+    <!-- <joint name="fts_plate" type="revolute">
+      <origin xyz="0 0 ${0.0505/2+0.00001}" rpy="${pi/2.0} 0 0" />
+      <parent link="fts" />
+      <child link="link_mountplate" />
+      <axis xyz="0 0 1" />
+      <limit velocity="0" effort="0" lower="0" upper="0" />
+    </joint>
+    <joint name="plate_precam" type="fixed">
+      <origin xyz="0 0 0" rpy="-${pi/2.0} 0  0" />
+      <parent link="link_mountplate" />
+      <child link="link_precam" />
+    </joint>
+    <joint name="precam_camera" type="fixed">
+      <origin xyz="0 0.053512 ${0.00254+0.023+0.00001}" rpy="0  0  0" />
+      <parent link="link_precam" />
+      <child link="link_camera" />
+    </joint>
+    <joint name="camera_imgplane" type="fixed">
+      <origin xyz="0.009 0 0" rpy="0 ${pi/2 + pi} -${pi/2}" />
+      <parent link="link_camera" />
+      <child link="link_camera_origin" />
+    </joint> -->
+    <joint name="fts_tool" type="fixed">
+      <!-- <origin xyz="0 0 ${0.0505/2 + 0.00254}" rpy="0 0 ${pi}" /> -->
+      <origin rpy="0 0 3.141592653589793" xyz="0 0 0.02525"/>
+      <parent link="fts" />
+      <child link="link_tool" />
+    </joint>
+
+ 
+</robot>
