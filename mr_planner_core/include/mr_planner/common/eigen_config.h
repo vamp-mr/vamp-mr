@@ -1,0 +1,3 @@
+#pragma once
+#define EIGEN_MAX_ALIGN_BYTES 16
+#define EIGEN_MAX_STATIC_ALIGN_BYTES 0

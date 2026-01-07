@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(mr_planner_core CONFIG)
+find_dependency(Eigen3 3.4)
+find_dependency(jsoncpp CONFIG)
+
+include("${CMAKE_CURRENT_LIST_DIR}/mr_planner_legoTargets.cmake")
+

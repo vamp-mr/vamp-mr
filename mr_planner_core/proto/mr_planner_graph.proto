@@ -1,0 +1,161 @@
+syntax = "proto3";
+
+package mr_planner.proto;
+
+message RobotPose
+{
+  int32 robot_id = 1;
+  string robot_name = 2;
+  repeated double joint_values = 3;
+  repeated double hand_values = 4;
+}
+
+message Node
+{
+  int32 time_step = 1;
+  int32 act_id = 2;
+  repeated double joint_values = 3;
+  repeated double hand_values = 4;
+}
+
+message RobotTimeline
+{
+  int32 robot_id = 1;
+  string robot_name = 2;
+  repeated Node nodes = 3;
+}
+
+message NodeKey
+{
+  int32 robot_id = 1;
+  int32 time_step = 2;
+}
+
+message Type2Edge
+{
+  int32 edge_id = 1;
+  bool switchable = 2;
+  bool tight = 3;
+  NodeKey from = 4;
+  NodeKey to = 5;
+}
+
+message TPGGraph
+{
+  string schema = 1;
+  uint32 schema_version = 2;
+
+  double dt = 3;
+  repeated RobotTimeline robots = 4;
+  repeated Type2Edge type2_edges = 5;
+
+  double pre_shortcut_flowtime = 6;
+  double pre_shortcut_makespan = 7;
+  double post_shortcut_flowtime = 8;
+  double post_shortcut_makespan = 9;
+}
+
+message ActivityKey
+{
+  int32 robot_id = 1;
+  int32 act_id = 2;
+}
+
+message SetCollision
+{
+  string obj_name = 1;
+  string link_name = 2;
+  bool allow = 3;
+}
+
+message Activity
+{
+  ActivityKey key = 1;
+
+  int32 type = 2;
+  string type_name = 3;
+
+  repeated ActivityKey type2_prev = 4;
+
+  RobotPose start_pose = 5;
+  RobotPose end_pose = 6;
+
+  repeated string obj_attached = 7;
+  repeated string obj_detached = 8;
+  repeated SetCollision collision_nodes = 9;
+
+  int32 start_time_step = 10;
+  int32 end_time_step = 11;
+}
+
+message Object
+{
+  string name = 1;
+  int32 state = 2;
+  string parent_link = 3;
+  int32 robot_id = 4;
+
+  double x = 5;
+  double y = 6;
+  double z = 7;
+  double qx = 8;
+  double qy = 9;
+  double qz = 10;
+  double qw = 11;
+
+  double x_attach = 12;
+  double y_attach = 13;
+  double z_attach = 14;
+  double qx_attach = 15;
+  double qy_attach = 16;
+  double qz_attach = 17;
+  double qw_attach = 18;
+
+  int32 shape = 19;
+  double radius = 20;
+  double length = 21;
+  double width = 22;
+  double height = 23;
+  string mesh_path = 24;
+}
+
+message ObjectNode
+{
+  int32 obj_node_id = 1;
+  Object object = 2;
+
+  string next_attach_link = 3;
+  bool vanish = 4;
+  bool handover = 5;
+  bool fixed = 6;
+
+  ActivityKey prev_detach = 7;
+  ActivityKey next_attach = 8;
+}
+
+message ActivityGraph
+{
+  int32 num_robots = 1;
+  repeated Activity activities = 2;
+  repeated ObjectNode objects = 3;
+}
+
+message ADGGraph
+{
+  TPGGraph base = 1;
+  ActivityGraph activity_graph = 2;
+  repeated int32 exec_start_act = 3;
+}
+
+message GraphFile
+{
+  string schema = 1;
+  uint32 schema_version = 2;
+
+  oneof graph
+  {
+    TPGGraph tpg = 3;
+    ADGGraph adg = 4;
+  }
+}
+
