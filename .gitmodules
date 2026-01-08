@@ -1,0 +1,4 @@
+[submodule "vamp"]
+	path = vamp
+	url = ../../philip-huang/vamp.git
+	branch = vamp-mr
