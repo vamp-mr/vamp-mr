@@ -11,6 +11,10 @@ This codebase, VAMP-MR, is the collection of
 
 **TLDR:** Building on the CPU SIMD accelerated single-robot motion planner [VAMP](https://github.com/KavrakiLab/vamp), we accelerate the motion generation, postprocessing, and execution for multi-arm manipulation tasks by 10x-100x. 
 
+<p align="center">
+  <video src="docs/resources/panda_four_move1_crop.mp4?raw=1" controls autoplay muted loop playsinline style="max-width: 100%; border-radius: 6px"></video>
+</p>
+
 ## Installation
 
 ### Step by step instruction.
