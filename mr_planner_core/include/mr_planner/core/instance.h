@@ -25,6 +25,7 @@
 #include <array>
 #include <cassert>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -258,6 +259,43 @@ public:
         (void)poses;
         (void)self;
         return {};
+    }
+
+    // Returns the end-effector transform in the world frame for the provided pose.
+    // Default implementation returns the position with identity rotation.
+    virtual Eigen::Isometry3d getEndEffectorTransformFromPose(const RobotPose &pose) const
+    {
+        Eigen::Isometry3d tf = Eigen::Isometry3d::Identity();
+        tf.translation() = getEndEffectorPositionFromPose(pose);
+        return tf;
+    }
+
+    struct InverseKinematicsOptions
+    {
+        static constexpr double kPi = 3.14159265358979323846;
+
+        std::optional<std::vector<double>> seed;
+        std::optional<std::vector<std::vector<double>>> fixed_joints;
+        int max_restarts{1};
+        int max_iters{100};
+        double tol_pos{0.025};
+        double tol_ang{15.0 * kPi / 180.0};
+        double step_scale{1.0};
+        double damping{1e-3};
+        bool self_only{false};
+    };
+
+    // Returns a joint configuration that reaches `target` within tolerances. Implementations may return
+    // std::nullopt when no solution was found. Collision checking is optional and controlled by `options`.
+    virtual std::optional<std::vector<double>> inverseKinematics(
+        int robot_id,
+        const Eigen::Isometry3d &target,
+        const InverseKinematicsOptions &options)
+    {
+        (void)robot_id;
+        (void)target;
+        (void)options;
+        return std::nullopt;
     }
     // Additional methods for future functionalities can be added here
     virtual ~PlanInstance() = default;

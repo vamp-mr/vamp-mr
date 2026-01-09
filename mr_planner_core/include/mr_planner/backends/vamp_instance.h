@@ -140,6 +140,11 @@ public:
     void moveObject(const Object &obj) override;
     void removeObject(const std::string &name) override;
     Eigen::Vector3d getEndEffectorPositionFromPose(const RobotPose &pose) const override;
+    Eigen::Isometry3d getEndEffectorTransformFromPose(const RobotPose &pose) const override;
+    std::optional<std::vector<double>> inverseKinematics(
+        int robot_id,
+        const Eigen::Isometry3d &target,
+        const PlanInstance::InverseKinematicsOptions &options) override;
     void printKnownObjects() const override;
 
 
@@ -173,6 +178,11 @@ private:
     using InterpolateDimFn = double (*)(const RobotPose &, const RobotPose &, double, int);
     using EndEffectorFn = Eigen::Vector3d (*)(const VampInstance &, const RobotPose &);
     using EndEffectorTfFn = Eigen::Isometry3f (*)(const VampInstance &, const RobotPose &);
+    using InverseKinematicsFn = std::optional<std::vector<double>> (*)(
+        VampInstance &,
+        int,
+        const Eigen::Isometry3d &,
+        const PlanInstance::InverseKinematicsOptions &);
 
     template <typename Robot>
     static void ensurePoseDimension(const RobotPose &pose);
@@ -372,6 +382,23 @@ private:
         -> std::array<EndEffectorTfFn, sizeof...(I)>
     {
         return std::array<EndEffectorTfFn, sizeof...(I)>{{&endEffectorTransformThunk<I>...}};
+    }
+
+    template <std::size_t Index>
+    static std::optional<std::vector<double>> inverseKinematicsThunk(
+        VampInstance &instance,
+        int robot_id,
+        const Eigen::Isometry3d &target,
+        const PlanInstance::InverseKinematicsOptions &options)
+    {
+        return instance.template inverseKinematicsImpl<RobotAt<Index>>(robot_id, target, options);
+    }
+
+    template <std::size_t... I>
+    static auto makeInverseKinematicsDispatchImpl(std::index_sequence<I...>)
+        -> std::array<InverseKinematicsFn, sizeof...(I)>
+    {
+        return std::array<InverseKinematicsFn, sizeof...(I)>{{&inverseKinematicsThunk<I>...}};
     }
 
     template <std::size_t Index>
@@ -612,6 +639,8 @@ private:
         makeEndEffectorDispatchImpl(std::make_index_sequence<kRobotCount>{});
     static inline const auto end_effector_tf_dispatch_ =
         makeEndEffectorTransformDispatchImpl(std::make_index_sequence<kRobotCount>{});
+    static inline const auto inverse_kinematics_dispatch_ =
+        makeInverseKinematicsDispatchImpl(std::make_index_sequence<kRobotCount>{});
 
     void rebuildCollisionFilter();
 
@@ -637,6 +666,12 @@ private:
 
     template <typename Robot>
     bool sampleImpl(RobotPose &pose);
+
+    template <typename Robot>
+    std::optional<std::vector<double>> inverseKinematicsImpl(
+        int robot_id,
+        const Eigen::Isometry3d &target,
+        const PlanInstance::InverseKinematicsOptions &options);
 
     template <typename Robot>
     static RobotPose interpolateImpl(const RobotPose &a, const RobotPose &b, double t);
@@ -3075,6 +3110,233 @@ Eigen::Vector3d VampInstance<RobotTs...>::getEndEffectorPositionFromPose(const R
     }
     const std::size_t index = static_cast<std::size_t>(pose.robot_id);
     return end_effector_dispatch_[index](*this, pose);
+}
+
+template <typename... RobotTs>
+Eigen::Isometry3d VampInstance<RobotTs...>::getEndEffectorTransformFromPose(const RobotPose &pose) const
+{
+    if (pose.robot_id < 0 || pose.robot_id >= static_cast<int>(kRobotCount))
+    {
+        throw std::out_of_range("VampInstance: robot id out of range");
+    }
+    const std::size_t index = static_cast<std::size_t>(pose.robot_id);
+    const Eigen::Isometry3f ee = end_effector_tf_dispatch_[index](*this, pose);
+    return ee.cast<double>();
+}
+
+template <typename... RobotTs>
+std::optional<std::vector<double>> VampInstance<RobotTs...>::inverseKinematics(
+    int robot_id,
+    const Eigen::Isometry3d &target,
+    const PlanInstance::InverseKinematicsOptions &options)
+{
+    if (robot_id < 0 || robot_id >= static_cast<int>(kRobotCount))
+    {
+        throw std::out_of_range("VampInstance: robot id out of range");
+    }
+    const std::size_t index = static_cast<std::size_t>(robot_id);
+    return inverse_kinematics_dispatch_[index](*this, robot_id, target, options);
+}
+
+template <typename... RobotTs>
+template <typename Robot>
+std::optional<std::vector<double>> VampInstance<RobotTs...>::inverseKinematicsImpl(
+    int robot_id,
+    const Eigen::Isometry3d &target,
+    const PlanInstance::InverseKinematicsOptions &options)
+{
+    if (robot_id < 0 || robot_id >= static_cast<int>(kRobotCount))
+    {
+        throw std::out_of_range("VampInstance: robot id out of range");
+    }
+
+    constexpr int kDim = static_cast<int>(Robot::dimension);
+
+    const std::size_t dof = getRobotDOF(robot_id);
+    if (dof == 0U)
+    {
+        throw std::runtime_error("VampInstance: robot DOF is zero");
+    }
+    if (dof < Robot::dimension)
+    {
+        throw std::runtime_error("VampInstance: robot DOF is smaller than robot model dimension");
+    }
+
+    const int max_restarts = (options.max_restarts > 0) ? options.max_restarts : 1;
+    const int max_iters = (options.max_iters > 0) ? options.max_iters : 1;
+    const double tol_pos = (options.tol_pos > 0.0) ? options.tol_pos : 0.025;
+    const double tol_ang = (options.tol_ang > 0.0) ? options.tol_ang : (15.0 * PlanInstance::InverseKinematicsOptions::kPi / 180.0);
+    const double step_scale = (options.step_scale > 0.0) ? options.step_scale : 1.0;
+    const double damping = (options.damping > 0.0) ? options.damping : 1e-3;
+    const bool self_only = options.self_only;
+
+    if (options.seed)
+    {
+        if (options.seed->size() != dof)
+        {
+            throw std::invalid_argument("VampInstance: IK seed dimension mismatch");
+        }
+    }
+
+    if (options.fixed_joints)
+    {
+        if (options.fixed_joints->size() != kRobotCount)
+        {
+            throw std::invalid_argument("VampInstance: IK fixed_joints robot count mismatch");
+        }
+        for (std::size_t rid = 0; rid < kRobotCount; ++rid)
+        {
+            if ((*options.fixed_joints)[rid].size() != getRobotDOF(static_cast<int>(rid)))
+            {
+                throw std::invalid_argument("VampInstance: IK fixed_joints dimension mismatch");
+            }
+        }
+    }
+
+    const auto so3_log = [](const Eigen::Matrix3d &R) -> Eigen::Vector3d
+    {
+        const Eigen::AngleAxisd aa(R);
+        const double angle = aa.angle();
+        if (std::abs(angle) < 1e-12)
+        {
+            return Eigen::Vector3d::Zero();
+        }
+        return aa.axis() * angle;
+    };
+
+    const double w_ang = tol_pos / tol_ang;
+    constexpr double kFiniteDiff = 1e-4;
+
+    auto clamp_q = [&](std::vector<double> *q)
+    {
+        if (!q)
+        {
+            return;
+        }
+        if (q->size() < Robot::dimension)
+        {
+            return;
+        }
+        for (int j = 0; j < kDim; ++j)
+        {
+            const double min_v = static_cast<double>(Robot::s_a[static_cast<std::size_t>(j)]);
+            const double max_v = static_cast<double>(Robot::s_a[static_cast<std::size_t>(j)] +
+                                                     Robot::s_m[static_cast<std::size_t>(j)]);
+            (*q)[static_cast<std::size_t>(j)] = std::max(min_v, std::min(max_v, (*q)[static_cast<std::size_t>(j)]));
+        }
+    };
+
+    auto in_collision_with_fixed = [&](const std::vector<double> &q) -> bool
+    {
+        std::vector<RobotPose> poses;
+        poses.reserve(kRobotCount);
+        for (std::size_t rid = 0; rid < kRobotCount; ++rid)
+        {
+            RobotPose pose = initRobotPose(static_cast<int>(rid));
+            if (static_cast<int>(rid) == robot_id)
+            {
+                pose.joint_values = q;
+            }
+            else if (options.fixed_joints)
+            {
+                pose.joint_values = (*options.fixed_joints)[rid];
+            }
+            else
+            {
+                // No fixed joints provided; only check the target robot in collision.
+                continue;
+            }
+            poses.push_back(std::move(pose));
+        }
+        if (poses.empty())
+        {
+            return false;
+        }
+        return checkCollision(poses, self_only);
+    };
+
+    for (int restart = 0; restart < max_restarts; ++restart)
+    {
+        std::vector<double> q;
+        if (restart == 0 && options.seed)
+        {
+            q = *options.seed;
+        }
+        else
+        {
+            RobotPose pose = initRobotPose(robot_id);
+            if (!sample(pose))
+            {
+                throw std::runtime_error("VampInstance: failed to sample pose for IK restart");
+            }
+            q = pose.joint_values;
+        }
+        clamp_q(&q);
+
+        for (int iter = 0; iter < max_iters; ++iter)
+        {
+            RobotPose pose = initRobotPose(robot_id);
+            pose.joint_values = q;
+            const Eigen::Isometry3d cur = getEndEffectorTransformFromPose(pose);
+
+            const Eigen::Vector3d p_err = target.translation() - cur.translation();
+            const Eigen::Matrix3d R_err = target.linear() * cur.linear().transpose();
+            const Eigen::Vector3d w_err = so3_log(R_err);
+            const double ang_err = std::abs(Eigen::AngleAxisd(R_err).angle());
+
+            if (p_err.norm() <= tol_pos && ang_err <= tol_ang)
+            {
+                if (!in_collision_with_fixed(q))
+                {
+                    return q;
+                }
+            }
+
+            Eigen::Matrix<double, 6, kDim> J;
+            J.setZero();
+            for (int j = 0; j < kDim; ++j)
+            {
+                std::vector<double> q_plus = q;
+                q_plus[static_cast<std::size_t>(j)] += kFiniteDiff;
+                clamp_q(&q_plus);
+
+                RobotPose pose_plus = initRobotPose(robot_id);
+                pose_plus.joint_values = q_plus;
+                const Eigen::Isometry3d plus = getEndEffectorTransformFromPose(pose_plus);
+
+                const Eigen::Vector3d dp = (plus.translation() - cur.translation()) / kFiniteDiff;
+                const Eigen::Matrix3d dR = plus.linear() * cur.linear().transpose();
+                const Eigen::Vector3d dw = so3_log(dR) / kFiniteDiff;
+
+                J.template block<3, 1>(0, j) = dp;
+                J.template block<3, 1>(3, j) = w_ang * dw;
+            }
+
+            Eigen::Matrix<double, 6, 1> e;
+            e.block<3, 1>(0, 0) = p_err;
+            e.block<3, 1>(3, 0) = w_ang * w_err;
+
+            Eigen::Matrix<double, 6, 6> A = J * J.transpose();
+            A.diagonal().array() += damping * damping;
+            const Eigen::Matrix<double, 6, 1> x = A.ldlt().solve(e);
+            Eigen::Matrix<double, kDim, 1> dq = J.transpose() * x;
+
+            const double max_step = 0.25;
+            const double max_abs = dq.cwiseAbs().maxCoeff();
+            if (max_abs > max_step)
+            {
+                dq *= (max_step / max_abs);
+            }
+
+            for (int j = 0; j < kDim; ++j)
+            {
+                q[static_cast<std::size_t>(j)] += step_scale * dq(j);
+            }
+            clamp_q(&q);
+        }
+    }
+
+    return std::nullopt;
 }
 
 template <typename... RobotTs>

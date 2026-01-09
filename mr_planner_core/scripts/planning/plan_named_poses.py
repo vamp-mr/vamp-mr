@@ -18,6 +18,7 @@ def find_srdf(catkin_src: Path, env: str) -> Path:
 
 def plan_once(
     *,
+    env,
     vamp_environment: str,
     planner: str,
     planning_time: float,
@@ -34,10 +35,6 @@ def plan_once(
     goal_pose: str,
     output_dir: Path,
     write_tpg: bool,
-    meshcat: bool,
-    meshcat_host: str,
-    meshcat_port: int,
-    meshcat_rate: float,
 ) -> dict:
     import mr_planner_core
 
@@ -49,7 +46,6 @@ def plan_once(
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    env = mr_planner_core.VampEnvironment(vamp_environment, vmax=vmax, seed=seed)
     res = env.plan(
         planner=planner,
         planning_time=planning_time,
@@ -65,11 +61,24 @@ def plan_once(
         roadmap_max_dist=roadmap_max_dist,
     )
 
-    if meshcat:
-        env.enable_meshcat(meshcat_host, meshcat_port)
-        env.play_solution_csv(res["solution_csv"], rate=meshcat_rate)
-
     return res
+
+
+def resolve_pose_sequence(args: argparse.Namespace) -> List[str]:
+    if args.poses:
+        seq = list(args.poses)
+    elif args.targets:
+        if not args.start:
+            raise SystemExit("Provide --start when using --targets")
+        seq = [args.start] + list(args.targets)
+    else:
+        if not args.start or not args.goal:
+            raise SystemExit("Provide --start and --goal (or use --poses ... or --targets ...)")
+        seq = [args.start, args.goal]
+
+    if len(seq) < 2:
+        raise SystemExit("Need at least 2 poses (start + at least one goal)")
+    return seq
 
 
 def main() -> int:
@@ -102,7 +111,18 @@ def main() -> int:
 
     parser.add_argument("--start", default="", help="SRDF group_state name (e.g. ready_pose)")
     parser.add_argument("--goal", default="", help="SRDF group_state name")
-    parser.add_argument("--poses", nargs="*", default=[], help="If provided, plan sequentially across this pose list.")
+    parser.add_argument(
+        "--targets",
+        nargs="*",
+        default=[],
+        help="Sequence of goal named poses; plans sequentially from --start to each target.",
+    )
+    parser.add_argument(
+        "--poses",
+        nargs="*",
+        default=[],
+        help="Full pose sequence (start + goals). Plans sequentially across this pose list.",
+    )
 
     parser.add_argument("--output-dir", default="", help="Output directory (defaults under /tmp)")
     parser.add_argument("--no-tpg", action="store_true", help="Skip building/writing tpg.pb")
@@ -111,6 +131,12 @@ def main() -> int:
     parser.add_argument("--meshcat-host", default="127.0.0.1")
     parser.add_argument("--meshcat-port", type=int, default=7600)
     parser.add_argument("--meshcat-rate", type=float, default=1.0)
+    parser.add_argument(
+        "--meshcat-play-mode",
+        choices=["each", "after_all"],
+        default="each",
+        help="When --meshcat is set: play after each segment, or after all planning completes.",
+    )
     args = parser.parse_args()
 
     import mr_planner_core
@@ -130,21 +156,21 @@ def main() -> int:
     catkin_src = Path(args.catkin_src) if args.catkin_src else default_catkin_src
     srdf_path = Path(args.srdf) if args.srdf else find_srdf(catkin_src, args.vamp_environment)
 
-    if args.poses:
-        if len(args.poses) < 2:
-            raise SystemExit("--poses requires at least 2 pose names")
-        pose_pairs: Sequence[Tuple[str, str]] = list(zip(args.poses[:-1], args.poses[1:]))
-    else:
-        if not args.start or not args.goal:
-            raise SystemExit("Provide --start and --goal (or use --poses ...)")
-        pose_pairs = [(args.start, args.goal)]
+    pose_sequence = resolve_pose_sequence(args)
+    pose_pairs: Sequence[Tuple[str, str]] = list(zip(pose_sequence[:-1], pose_sequence[1:]))
 
     output_root = Path(args.output_dir) if args.output_dir else Path("/tmp") / "mr_planner_py_meshcat"
 
+    env = mr_planner_core.VampEnvironment(args.vamp_environment, vmax=args.vmax, seed=args.seed)
+    if args.meshcat:
+        env.enable_meshcat(args.meshcat_host, args.meshcat_port)
+
     results = []
+    solution_csvs: List[str] = []
     for idx, (start_pose, goal_pose) in enumerate(pose_pairs):
         out_dir = output_root / f"{idx:02d}_{args.vamp_environment}_{args.planner}_{start_pose}_to_{goal_pose}"
         res = plan_once(
+            env=env,
             vamp_environment=args.vamp_environment,
             planner=args.planner,
             planning_time=args.planning_time,
@@ -161,12 +187,15 @@ def main() -> int:
             goal_pose=goal_pose,
             output_dir=out_dir,
             write_tpg=(not args.no_tpg),
-            meshcat=args.meshcat,
-            meshcat_host=args.meshcat_host,
-            meshcat_port=args.meshcat_port,
-            meshcat_rate=args.meshcat_rate,
         )
         results.append(res)
+        solution_csvs.append(res["solution_csv"])
+        if args.meshcat and args.meshcat_play_mode == "each":
+            env.play_solution_csv(res["solution_csv"], rate=args.meshcat_rate)
+
+    if args.meshcat and args.meshcat_play_mode == "after_all":
+        for csv_path in solution_csvs:
+            env.play_solution_csv(csv_path, rate=args.meshcat_rate)
 
     print(json.dumps({"srdf": str(srdf_path), "move_group": move_group, "robot_groups": robot_groups, "runs": results}, indent=2))
     return 0

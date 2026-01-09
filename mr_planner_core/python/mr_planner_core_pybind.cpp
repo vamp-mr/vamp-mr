@@ -15,12 +15,17 @@
 
 #include "mr_planner_graph.pb.h"
 
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+
 #include <google/protobuf/util/json_util.h>
 
 #include <chrono>
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -709,7 +714,10 @@ public:
             instance_->setRobotDOF(rid, 7);
         }
         instance_->setVmax(vmax);
-        instance_->setRandomSeed(static_cast<unsigned int>(seed));
+        if (seed >= 0)
+        {
+            instance_->setRandomSeed(static_cast<unsigned int>(seed));
+        }
 
         vamp_env::add_environment_obstacles(config_, *instance_);
         vamp_env::add_environment_attachments(config_, *instance_);
@@ -739,6 +747,265 @@ public:
         return out;
     }
 
+    py::dict build_roadmaps(int roadmap_samples, double roadmap_max_dist, int seed)
+    {
+        const double init_time_sec = rebuild_roadmap_cache(roadmap_samples, roadmap_max_dist, seed);
+
+        py::dict out;
+        out["num_robots"] = instance_->getNumberOfRobots();
+        out["seed_requested"] = seed;
+        out["seed"] = roadmap_cache_seed_;
+        out["roadmap_samples"] = roadmap_samples;
+        out["roadmap_max_dist"] = roadmap_max_dist;
+        out["init_time_sec"] = init_time_sec;
+        return out;
+    }
+
+    py::dict load_roadmaps(const std::string &path)
+    {
+        const int num_robots = instance_->getNumberOfRobots();
+        if (num_robots <= 0)
+        {
+            throw std::runtime_error("Environment has no robots configured");
+        }
+        if (path.empty())
+        {
+            throw std::runtime_error("roadmap file path is empty");
+        }
+
+        const auto t0 = std::chrono::steady_clock::now();
+        std::ifstream ifs(path, std::ios::binary);
+        if (!ifs.is_open())
+        {
+            throw std::runtime_error("Failed to open roadmap file: " + path);
+        }
+
+        std::vector<std::shared_ptr<RoadMap>> loaded;
+        try
+        {
+            boost::archive::binary_iarchive ia(ifs);
+            ia >> loaded;
+        }
+        catch (const std::exception &e)
+        {
+            throw std::runtime_error(std::string("Failed to deserialize roadmaps from ") + path + ": " + e.what());
+        }
+
+        if (static_cast<int>(loaded.size()) != num_robots)
+        {
+            throw std::runtime_error("Roadmap file robot count mismatch: expected " + std::to_string(num_robots) +
+                                     " got " + std::to_string(loaded.size()));
+        }
+
+        for (auto &rm : loaded)
+        {
+            if (!rm)
+            {
+                throw std::runtime_error("Roadmap file contains null roadmap entries");
+            }
+            rm->setInstance(instance_);
+        }
+
+        roadmap_cache_ = std::move(loaded);
+        roadmap_cache_valid_ = true;
+        roadmap_cache_seed_ = 0;
+        roadmap_cache_samples_ = 0;
+        roadmap_cache_max_dist_ = 0.0;
+        roadmap_cache_from_file_ = true;
+        roadmap_cache_file_ = path;
+
+        const auto t1 = std::chrono::steady_clock::now();
+        py::dict out;
+        out["num_robots"] = num_robots;
+        out["roadmap_file"] = path;
+        out["load_time_sec"] = std::chrono::duration<double>(t1 - t0).count();
+        return out;
+    }
+
+    py::dict save_roadmaps(const std::string &path) const
+    {
+        if (!roadmap_cache_valid_ || roadmap_cache_.empty())
+        {
+            throw std::runtime_error("No cached roadmaps to save (call plan/build_roadmaps/load_roadmaps first)");
+        }
+        if (path.empty())
+        {
+            throw std::runtime_error("roadmap file path is empty");
+        }
+
+        const auto t0 = std::chrono::steady_clock::now();
+        std::filesystem::path out_path(path);
+        if (!out_path.parent_path().empty())
+        {
+            std::filesystem::create_directories(out_path.parent_path());
+        }
+
+        std::ofstream ofs(path, std::ios::binary);
+        if (!ofs.is_open())
+        {
+            throw std::runtime_error("Failed to open roadmap file for writing: " + path);
+        }
+
+        try
+        {
+            boost::archive::binary_oarchive oa(ofs);
+            oa << roadmap_cache_;
+        }
+        catch (const std::exception &e)
+        {
+            throw std::runtime_error(std::string("Failed to serialize roadmaps to ") + path + ": " + e.what());
+        }
+
+        const auto t1 = std::chrono::steady_clock::now();
+        py::dict out;
+        out["num_robots"] = static_cast<int>(roadmap_cache_.size());
+        out["roadmap_file"] = path;
+        out["save_time_sec"] = std::chrono::duration<double>(t1 - t0).count();
+        out["source"] = roadmap_cache_from_file_ ? "file" : "built";
+        return out;
+    }
+
+    py::dict roadmap_cache_stats(bool check_collision, bool self_only) const
+    {
+        if (!roadmap_cache_valid_ || roadmap_cache_.empty())
+        {
+            throw std::runtime_error("No cached roadmaps (call plan/build_roadmaps/load_roadmaps first)");
+        }
+
+        py::dict out;
+        out["source"] = roadmap_cache_from_file_ ? "file" : "built";
+        if (roadmap_cache_from_file_)
+        {
+            out["roadmap_file"] = roadmap_cache_file_;
+        }
+        else
+        {
+            out["seed"] = roadmap_cache_seed_;
+            out["roadmap_samples"] = roadmap_cache_samples_;
+            out["roadmap_max_dist"] = roadmap_cache_max_dist_;
+        }
+
+        py::list robots;
+
+        for (std::size_t rid = 0; rid < roadmap_cache_.size(); ++rid)
+        {
+            const auto &rm = roadmap_cache_[rid];
+            if (!rm)
+            {
+                continue;
+            }
+            const auto g = rm->getRoadmap();
+            if (!g)
+            {
+                continue;
+            }
+
+            const int n_vertices = g->size;
+            std::uint64_t degree_sum = 0;
+            int n_isolated = 0;
+            std::uint64_t edge_half_sum = 0;
+            for (int vid = 0; vid < n_vertices; ++vid)
+            {
+                const std::size_t deg = g->adjList[static_cast<std::size_t>(vid)].size();
+                degree_sum += deg;
+                edge_half_sum += deg;
+                if (deg == 0)
+                {
+                    ++n_isolated;
+                }
+            }
+            const std::uint64_t n_edges = edge_half_sum / 2;
+
+            // Connected components via BFS.
+            int components = 0;
+            int largest_component = 0;
+            std::vector<char> visited(static_cast<std::size_t>(std::max(0, n_vertices)), 0);
+            std::vector<int> queue;
+            queue.reserve(static_cast<std::size_t>(std::max(0, n_vertices)));
+            for (int start = 0; start < n_vertices; ++start)
+            {
+                if (visited[static_cast<std::size_t>(start)])
+                {
+                    continue;
+                }
+                ++components;
+                visited[static_cast<std::size_t>(start)] = 1;
+                queue.clear();
+                queue.push_back(start);
+                int comp_size = 0;
+                for (std::size_t qi = 0; qi < queue.size(); ++qi)
+                {
+                    const int u = queue[qi];
+                    ++comp_size;
+                    for (const auto &nbr : g->adjList[static_cast<std::size_t>(u)])
+                    {
+                        if (!nbr)
+                        {
+                            continue;
+                        }
+                        const int v = nbr->id;
+                        if (v < 0 || v >= n_vertices)
+                        {
+                            continue;
+                        }
+                        if (visited[static_cast<std::size_t>(v)])
+                        {
+                            continue;
+                        }
+                        visited[static_cast<std::size_t>(v)] = 1;
+                        queue.push_back(v);
+                    }
+                }
+                largest_component = std::max(largest_component, comp_size);
+            }
+
+            int n_colliding = 0;
+            if (check_collision)
+            {
+                for (const auto &vtx : g->vertices)
+                {
+                    if (!vtx)
+                    {
+                        continue;
+                    }
+                    if (instance_->checkCollision({vtx->pose}, self_only))
+                    {
+                        ++n_colliding;
+                    }
+                }
+            }
+
+            py::dict r;
+            r["robot_id"] = static_cast<int>(rid);
+            r["n_vertices"] = n_vertices;
+            r["n_edges"] = static_cast<std::uint64_t>(n_edges);
+            r["avg_degree"] = (n_vertices > 0) ? (static_cast<double>(degree_sum) / static_cast<double>(n_vertices)) : 0.0;
+            r["n_isolated"] = n_isolated;
+            r["components"] = components;
+            r["largest_component"] = largest_component;
+            if (check_collision)
+            {
+                r["n_colliding_vertices"] = n_colliding;
+            }
+            robots.append(std::move(r));
+        }
+        out["robots"] = std::move(robots);
+        return out;
+    }
+
+    void set_random_seed(int seed)
+    {
+        if (seed >= 0)
+        {
+            instance_->setRandomSeed(static_cast<unsigned int>(seed));
+        }
+        else
+        {
+            instance_->setRandomSeed(entropy_seed_u32());
+        }
+        invalidate_roadmap_cache();
+    }
+
     void enable_meshcat(const std::string &host, int port)
     {
         instance_->enableMeshcat(host, static_cast<std::uint16_t>(port));
@@ -754,6 +1021,46 @@ public:
         vamp_env::add_environment_attachments(config_, *instance_);
         instance_->updateScene();
         invalidate_roadmap_cache();
+    }
+
+    void set_robot_base_transform(int robot_id, const std::vector<std::vector<double>> &transform)
+    {
+        const int num_robots = instance_->getNumberOfRobots();
+        if (robot_id < 0 || robot_id >= num_robots)
+        {
+            throw std::runtime_error("robot_id out of range");
+        }
+        if (transform.size() != 4U || transform[0].size() != 4U || transform[1].size() != 4U ||
+            transform[2].size() != 4U || transform[3].size() != 4U)
+        {
+            throw std::runtime_error("transform must be a 4x4 matrix");
+        }
+
+        Eigen::Matrix4d m = Eigen::Matrix4d::Identity();
+        for (int r = 0; r < 4; ++r)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                m(r, c) = transform[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)];
+            }
+        }
+        Eigen::Isometry3d tf = Eigen::Isometry3d::Identity();
+        tf.matrix() = m;
+        instance_->setRobotBaseTransform(robot_id, tf);
+        invalidate_roadmap_cache();
+    }
+
+    void set_robot_base_transforms(const std::vector<std::vector<std::vector<double>>> &transforms)
+    {
+        const int num_robots = instance_->getNumberOfRobots();
+        if (static_cast<int>(transforms.size()) != num_robots)
+        {
+            throw std::runtime_error("transforms robot count mismatch");
+        }
+        for (int rid = 0; rid < num_robots; ++rid)
+        {
+            set_robot_base_transform(rid, transforms[static_cast<std::size_t>(rid)]);
+        }
     }
 
     void seed_initial_scene_from_skillplan(const std::string &skillplan_path)
@@ -889,6 +1196,95 @@ public:
         throw std::runtime_error("Failed to sample a collision-free pose for robot_id=" + std::to_string(robot_id));
     }
 
+    std::vector<std::vector<double>> end_effector_transform(int robot_id, const std::vector<double> &joint_positions) const
+    {
+        RobotPose pose = instance_->initRobotPose(robot_id);
+        pose.joint_values = joint_positions;
+        const Eigen::Isometry3d tf = instance_->getEndEffectorTransformFromPose(pose);
+
+        std::vector<std::vector<double>> out(4, std::vector<double>(4, 0.0));
+        const Eigen::Matrix4d m = tf.matrix();
+        for (int r = 0; r < 4; ++r)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                out[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)] = m(r, c);
+            }
+        }
+        return out;
+    }
+
+    std::optional<std::vector<double>> inverse_kinematics(int robot_id,
+                                                          const std::vector<std::vector<double>> &target_tf,
+                                                          const py::object &seed_obj,
+                                                          const py::object &fixed_joints_obj,
+                                                          int max_restarts,
+                                                          int max_iters,
+                                                          double tol_pos,
+                                                          double tol_ang,
+                                                          double step_scale,
+                                                          double damping,
+                                                          bool self_only)
+    {
+        const int num_robots = instance_->getNumberOfRobots();
+        if (robot_id < 0 || robot_id >= num_robots)
+        {
+            throw std::runtime_error("robot_id out of range");
+        }
+
+        const std::size_t dof = instance_->getRobotDOF(robot_id);
+        if (dof == 0)
+        {
+            throw std::runtime_error("Robot DOF is zero");
+        }
+
+        if (target_tf.size() != 4U || target_tf[0].size() != 4U || target_tf[1].size() != 4U ||
+            target_tf[2].size() != 4U || target_tf[3].size() != 4U)
+        {
+            throw std::runtime_error("target_tf must be a 4x4 matrix");
+        }
+
+        Eigen::Matrix4d target_m = Eigen::Matrix4d::Identity();
+        for (int r = 0; r < 4; ++r)
+        {
+            for (int c = 0; c < 4; ++c)
+            {
+                target_m(r, c) = target_tf[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)];
+            }
+        }
+        Eigen::Isometry3d target = Eigen::Isometry3d::Identity();
+        target.matrix() = target_m;
+
+        PlanInstance::InverseKinematicsOptions options;
+        options.max_restarts = max_restarts;
+        options.max_iters = max_iters;
+        options.tol_pos = tol_pos;
+        options.tol_ang = tol_ang;
+        options.step_scale = step_scale;
+        options.damping = damping;
+        options.self_only = self_only;
+
+        if (!seed_obj.is_none())
+        {
+            options.seed = seed_obj.cast<std::vector<double>>();
+            if (options.seed->size() != dof)
+            {
+                throw std::runtime_error("seed joint vector has wrong dimension");
+            }
+        }
+
+        if (auto v = maybe_joint_matrix(fixed_joints_obj))
+        {
+            options.fixed_joints = std::move(*v);
+            if (static_cast<int>(options.fixed_joints->size()) != num_robots)
+            {
+                throw std::runtime_error("fixed_joints robot count mismatch");
+            }
+        }
+
+        return instance_->inverseKinematics(robot_id, target, options);
+    }
+
     void add_object(const Object &obj)
     {
         instance_->addMoveableObject(obj);
@@ -948,10 +1344,16 @@ public:
                   const std::string &output_dir,
                   bool write_tpg,
                   int roadmap_samples,
-                  double roadmap_max_dist)
+                  double roadmap_max_dist,
+                  bool write_files,
+                  bool return_trajectories,
+                  std::optional<int> roadmap_seed)
     {
         instance_->setVmax(vmax);
-        instance_->setRandomSeed(static_cast<unsigned int>(seed));
+        if (seed >= 0)
+        {
+            instance_->setRandomSeed(static_cast<unsigned int>(seed));
+        }
 
         std::vector<std::vector<double>> start;
         std::vector<std::vector<double>> goal;
@@ -1004,15 +1406,18 @@ public:
             instance_->setGoalPose(i, goal[static_cast<std::size_t>(i)]);
         }
 
-        const std::string resolved_output_dir = output_dir.empty() ? make_temp_dir("mr_planner_py_plan") : output_dir;
-        std::filesystem::create_directories(resolved_output_dir);
+        const bool need_output_dir = write_files || write_tpg;
+        const std::string resolved_output_dir =
+            need_output_dir ? (output_dir.empty() ? make_temp_dir("mr_planner_py_plan") : output_dir) : std::string();
+        if (need_output_dir)
+        {
+            std::filesystem::create_directories(resolved_output_dir);
+        }
 
         PlannerOptions options;
         options.max_planning_time = planning_time;
         options.rrt_max_planning_time = planning_time;
         options.max_planning_iterations = 10000;
-        options.max_dist = roadmap_max_dist;
-        options.num_samples = roadmap_samples;
         options.rrt_seed = seed;
 
         MRTrajectory solution;
@@ -1021,8 +1426,12 @@ public:
         bool roadmap_cache_hit = false;
         if (planner == "composite_rrt")
         {
+            options.max_dist = roadmap_max_dist;
             CompositeRRTCPlanner planner_impl(instance_);
-            planner_impl.setSeed(seed);
+            if (seed >= 0)
+            {
+                planner_impl.setSeed(seed);
+            }
             if (!planner_impl.plan(options))
             {
                 throw std::runtime_error("Planning failed");
@@ -1035,44 +1444,26 @@ public:
         }
         else if (planner == "cbs_prm")
         {
-            std::vector<std::shared_ptr<RoadMap>> roadmaps;
-            const bool cache_hit =
-                roadmap_cache_valid_ && roadmap_cache_seed_ == seed && roadmap_cache_samples_ == roadmap_samples &&
-                std::abs(roadmap_cache_max_dist_ - roadmap_max_dist) < 1e-12 &&
-                static_cast<int>(roadmap_cache_.size()) == num_robots;
+            const int effective_roadmap_seed = roadmap_seed.value_or(seed);
 
-            roadmap_cache_hit = cache_hit;
-            if (cache_hit)
-            {
-                roadmaps = roadmap_cache_;
-            }
-            else
-            {
-                const auto init_t0 = std::chrono::steady_clock::now();
-                roadmap_cache_.clear();
-                roadmap_cache_.reserve(static_cast<std::size_t>(num_robots));
+            // PRM edge validation uses `options.max_dist` directly, while RoadMap uses
+            // `2 * max_dist_` in its `validateMotion` check. ROS demos rely on the
+            // default `PlannerOptions::max_dist` (4.0) paired with RoadMap's default
+            // `max_dist_` (2.0). Mirror that behavior by scaling here so passing
+            // `roadmap_max_dist=2.0` produces the same planning behavior as ROS.
+            options.max_dist = 2.0 * roadmap_max_dist;
+            options.num_samples = roadmap_samples;
 
-                // Build once per environment/settings; subsequent calls reuse the cached roadmaps.
+            auto cache = get_cached_or_build_roadmaps(roadmap_samples, roadmap_max_dist, effective_roadmap_seed);
+            roadmap_cache_hit = cache.cache_hit;
+            init_time = cache.init_time_sec;
+
+            if (seed >= 0)
+            {
                 instance_->setRandomSeed(static_cast<unsigned int>(seed));
-                for (int rid = 0; rid < num_robots; ++rid)
-                {
-                    auto rm = std::make_shared<RoadMap>(instance_, rid);
-                    rm->setNumSamples(roadmap_samples);
-                    rm->setMaxDist(roadmap_max_dist);
-                    rm->buildRoadmap();
-                    roadmap_cache_.push_back(std::move(rm));
-                }
-                const auto init_t1 = std::chrono::steady_clock::now();
-                init_time = std::chrono::duration<double>(init_t1 - init_t0).count();
-
-                roadmap_cache_valid_ = true;
-                roadmap_cache_seed_ = seed;
-                roadmap_cache_samples_ = roadmap_samples;
-                roadmap_cache_max_dist_ = roadmap_max_dist;
-                roadmaps = roadmap_cache_;
             }
 
-            CBSPlanner planner_impl(instance_, roadmaps);
+            CBSPlanner planner_impl(instance_, std::move(cache.roadmaps));
             if (!planner_impl.plan(options))
             {
                 throw std::runtime_error("CBS PRM planning failed");
@@ -1098,8 +1489,12 @@ public:
 
         MRTrajectory discrete;
         rediscretizeSolution(instance_, solution, discrete, dt);
-        const std::string raw_csv = (std::filesystem::path(resolved_output_dir) / "solution_raw.csv").string();
-        saveSolution(instance_, discrete, raw_csv);
+        std::string raw_csv;
+        if (write_files)
+        {
+            raw_csv = (std::filesystem::path(resolved_output_dir) / "solution_raw.csv").string();
+            saveSolution(instance_, discrete, raw_csv);
+        }
 
         MRTrajectory final_solution = discrete;
         if (shortcut_time > 0.0)
@@ -1109,7 +1504,9 @@ public:
             sc.dt = dt;
             sc.seed = seed;
             sc.thompson_selector = true;
-            sc.progress_file = (std::filesystem::path(resolved_output_dir) / "shortcut_progress.csv").string();
+            sc.progress_file = write_files ?
+                                   (std::filesystem::path(resolved_output_dir) / "shortcut_progress.csv").string() :
+                                   std::string();
 
             Shortcutter shortcutter(instance_, sc);
             MRTrajectory shortcut;
@@ -1119,11 +1516,17 @@ public:
             }
         }
 
-        const std::string out_csv = (std::filesystem::path(resolved_output_dir) / "solution.csv").string();
-        saveSolution(instance_, final_solution, out_csv);
-
-        const std::string skillplan_path = (std::filesystem::path(resolved_output_dir) / "skillplan.json").string();
+        std::string out_csv;
+        if (write_files)
         {
+            out_csv = (std::filesystem::path(resolved_output_dir) / "solution.csv").string();
+            saveSolution(instance_, final_solution, out_csv);
+        }
+
+        std::string skillplan_path;
+        if (write_files)
+        {
+            skillplan_path = (std::filesystem::path(resolved_output_dir) / "skillplan.json").string();
             std::vector<mr_planner::skillplan::RobotSpec> robots;
             robots.reserve(static_cast<std::size_t>(num_robots));
             for (int i = 0; i < num_robots; ++i)
@@ -1178,12 +1581,66 @@ public:
         out["planner_time_sec"] = planner_time;
         out["init_time_sec"] = init_time;
         out["roadmap_cache_hit"] = roadmap_cache_hit;
+        out["roadmap_source"] = roadmap_cache_from_file_ ? "file" : "built";
+        if (roadmap_cache_from_file_)
+        {
+            out["roadmap_file"] = roadmap_cache_file_;
+        }
+        else
+        {
+            out["roadmap_seed"] = roadmap_cache_seed_;
+            out["roadmap_samples"] = roadmap_cache_samples_;
+            out["roadmap_max_dist"] = roadmap_cache_max_dist_;
+        }
         out["n_node_expanded"] = num_nodes_expanded;
         out["n_col_checks"] = num_col_checks;
         out["solution_raw_csv"] = raw_csv;
         out["solution_csv"] = out_csv;
         out["skillplan_json"] = skillplan_path;
         out["tpg_pb"] = tpg_pb_path;
+
+        if (return_trajectories)
+        {
+            auto pack = [&](const MRTrajectory &traj,
+                            std::vector<double> *times_out,
+                            std::vector<std::vector<std::vector<double>>> *joints_out) {
+                if (!times_out || !joints_out)
+                {
+                    return;
+                }
+                times_out->clear();
+                joints_out->clear();
+                joints_out->resize(static_cast<std::size_t>(num_robots));
+                if (traj.empty())
+                {
+                    return;
+                }
+                const auto &rt0 = traj.front();
+                times_out->assign(rt0.times.begin(), rt0.times.end());
+                for (int rid = 0; rid < num_robots; ++rid)
+                {
+                    const auto &rt = traj[static_cast<std::size_t>(rid)];
+                    auto &out_r = (*joints_out)[static_cast<std::size_t>(rid)];
+                    out_r.reserve(rt.trajectory.size());
+                    for (const auto &pose : rt.trajectory)
+                    {
+                        out_r.push_back(pose.joint_values);
+                    }
+                }
+            };
+
+            std::vector<double> times_raw_out;
+            std::vector<std::vector<std::vector<double>>> traj_raw_out;
+            pack(discrete, &times_raw_out, &traj_raw_out);
+            std::vector<double> times_out;
+            std::vector<std::vector<std::vector<double>>> traj_out;
+            pack(final_solution, &times_out, &traj_out);
+
+            out["times_raw"] = times_raw_out;
+            out["traj_raw"] = traj_raw_out;
+            out["times"] = times_out;
+            out["traj"] = traj_out;
+        }
         return out;
     }
 
@@ -1492,6 +1949,84 @@ private:
         roadmap_cache_seed_ = 0;
         roadmap_cache_samples_ = 0;
         roadmap_cache_max_dist_ = 0.0;
+        roadmap_cache_from_file_ = false;
+        roadmap_cache_file_.clear();
+    }
+
+    static std::uint32_t entropy_seed_u32()
+    {
+        std::random_device rd;
+        const std::uint64_t seed64 =
+            (static_cast<std::uint64_t>(rd()) << 32) ^ static_cast<std::uint64_t>(rd());
+        return static_cast<std::uint32_t>((seed64 >> 32) ^ (seed64 & 0xffffffffu));
+    }
+
+    struct RoadmapCacheResult
+    {
+        std::vector<std::shared_ptr<RoadMap>> roadmaps;
+        bool cache_hit{false};
+        double init_time_sec{0.0};
+    };
+
+    double rebuild_roadmap_cache(int roadmap_samples, double roadmap_max_dist, int seed)
+    {
+        const int num_robots = instance_->getNumberOfRobots();
+        if (num_robots <= 0)
+        {
+            throw std::runtime_error("Environment has no robots configured");
+        }
+
+        const std::uint32_t seed_used = (seed >= 0) ? static_cast<std::uint32_t>(seed) : entropy_seed_u32();
+        instance_->setRandomSeed(static_cast<unsigned int>(seed_used));
+
+        const auto t0 = std::chrono::steady_clock::now();
+        roadmap_cache_.clear();
+        roadmap_cache_.reserve(static_cast<std::size_t>(num_robots));
+        for (int rid = 0; rid < num_robots; ++rid)
+        {
+            auto rm = std::make_shared<RoadMap>(instance_, rid);
+            rm->setNumSamples(roadmap_samples);
+            rm->setMaxDist(roadmap_max_dist);
+            rm->buildRoadmap();
+            roadmap_cache_.push_back(std::move(rm));
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+
+        roadmap_cache_valid_ = true;
+        roadmap_cache_seed_ = seed_used;
+        roadmap_cache_samples_ = roadmap_samples;
+        roadmap_cache_max_dist_ = roadmap_max_dist;
+        roadmap_cache_from_file_ = false;
+        roadmap_cache_file_.clear();
+
+        return std::chrono::duration<double>(t1 - t0).count();
+    }
+
+    RoadmapCacheResult get_cached_or_build_roadmaps(int roadmap_samples, double roadmap_max_dist, int seed)
+    {
+        const int num_robots = instance_->getNumberOfRobots();
+        if (num_robots <= 0)
+        {
+            throw std::runtime_error("Environment has no robots configured");
+        }
+
+        RoadmapCacheResult result;
+        result.cache_hit =
+            roadmap_cache_valid_ && static_cast<int>(roadmap_cache_.size()) == num_robots &&
+            (roadmap_cache_from_file_ ||
+             ((seed < 0 || roadmap_cache_seed_ == static_cast<std::uint32_t>(seed)) &&
+              roadmap_cache_samples_ == roadmap_samples &&
+              std::abs(roadmap_cache_max_dist_ - roadmap_max_dist) < 1e-12));
+
+        if (result.cache_hit)
+        {
+            result.roadmaps = roadmap_cache_;
+            return result;
+        }
+
+        result.init_time_sec = rebuild_roadmap_cache(roadmap_samples, roadmap_max_dist, seed);
+        result.roadmaps = roadmap_cache_;
+        return result;
     }
 
     vamp_env::EnvironmentConfig config_;
@@ -1499,9 +2034,11 @@ private:
 
     std::vector<std::shared_ptr<RoadMap>> roadmap_cache_;
     bool roadmap_cache_valid_{false};
-    int roadmap_cache_seed_{0};
+    std::uint32_t roadmap_cache_seed_{0};
     int roadmap_cache_samples_{0};
     double roadmap_cache_max_dist_{0.0};
+    bool roadmap_cache_from_file_{false};
+    std::string roadmap_cache_file_;
 };
 
 py::dict plan(const std::string &vamp_environment,
@@ -2370,6 +2907,18 @@ PYBIND11_MODULE(_mr_planner_core, m)
             py::arg("seed") = 1)
         .def_property_readonly("environment_name", &VampEnvironment::environment_name)
         .def("info", &VampEnvironment::info)
+        .def("set_random_seed", &VampEnvironment::set_random_seed, py::arg("seed"))
+        .def("build_roadmaps",
+             &VampEnvironment::build_roadmaps,
+             py::arg("roadmap_samples") = 500,
+             py::arg("roadmap_max_dist") = 2.0,
+             py::arg("seed") = 1)
+        .def("load_roadmaps", &VampEnvironment::load_roadmaps, py::arg("path"))
+        .def("save_roadmaps", &VampEnvironment::save_roadmaps, py::arg("path"))
+        .def("roadmap_cache_stats",
+             &VampEnvironment::roadmap_cache_stats,
+             py::arg("check_collision") = false,
+             py::arg("self_only") = false)
         .def("enable_meshcat",
              &VampEnvironment::enable_meshcat,
              py::arg("host") = "127.0.0.1",
@@ -2377,6 +2926,11 @@ PYBIND11_MODULE(_mr_planner_core, m)
         .def("disable_meshcat", &VampEnvironment::disable_meshcat)
         .def("update_scene", &VampEnvironment::update_scene)
         .def("reset_scene", &VampEnvironment::reset_scene, py::arg("reset_sim") = true)
+        .def("set_robot_base_transform",
+             &VampEnvironment::set_robot_base_transform,
+             py::arg("robot_id"),
+             py::arg("transform"))
+        .def("set_robot_base_transforms", &VampEnvironment::set_robot_base_transforms, py::arg("transforms"))
         .def("seed_initial_scene_from_skillplan",
              &VampEnvironment::seed_initial_scene_from_skillplan,
              py::arg("skillplan_path"))
@@ -2401,6 +2955,23 @@ PYBIND11_MODULE(_mr_planner_core, m)
              &VampEnvironment::sample_collision_free_pose,
              py::arg("robot_id"),
              py::arg("max_attempts") = 200,
+             py::arg("self_only") = false)
+        .def("end_effector_transform",
+             &VampEnvironment::end_effector_transform,
+             py::arg("robot_id"),
+             py::arg("joint_positions"))
+        .def("inverse_kinematics",
+             &VampEnvironment::inverse_kinematics,
+             py::arg("robot_id"),
+             py::arg("target_tf"),
+             py::arg("seed") = py::none(),
+             py::arg("fixed_joints") = py::none(),
+             py::arg("max_restarts") = 25,
+             py::arg("max_iters") = 120,
+             py::arg("tol_pos") = 0.025,
+             py::arg("tol_ang") = 0.2617993877991494,
+             py::arg("step_scale") = 1.0,
+             py::arg("damping") = 1e-3,
              py::arg("self_only") = false)
         .def("add_object", &VampEnvironment::add_object, py::arg("obj"))
         .def("move_object", &VampEnvironment::move_object, py::arg("obj"))
@@ -2435,7 +3006,10 @@ PYBIND11_MODULE(_mr_planner_core, m)
              py::arg("output_dir") = "",
              py::arg("write_tpg") = true,
              py::arg("roadmap_samples") = 500,
-             py::arg("roadmap_max_dist") = 2.0)
+             py::arg("roadmap_max_dist") = 2.0,
+             py::arg("write_files") = true,
+             py::arg("return_trajectories") = false,
+             py::arg("roadmap_seed") = py::none())
         .def("shortcut_trajectory",
              &VampEnvironment::shortcut_trajectory,
              py::arg("trajectory"),

@@ -4,7 +4,6 @@ include(CMakeFindDependencyMacro)
 
 find_dependency(Eigen3 3.4)
 find_dependency(Boost COMPONENTS system filesystem date_time thread serialization)
-find_dependency(ompl)
 find_dependency(OpenMP)
 find_dependency(Protobuf)
 find_dependency(TBB QUIET)

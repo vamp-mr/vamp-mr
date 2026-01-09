@@ -1,6 +1,8 @@
 # mr_planner_core
 
-Standalone CMake build of the core planning library (planning, shortcutting, TPG/ADG construction, portable graph I/O) for ``VAMP-MR``. This is intended to be the “engine” that pairs naturally with the SIMD-accelerated VAMP collision backend.
+Standalone (non-ROS) CMake build of the core `mr_planner` library (planning, shortcutting, TPG/ADG construction, portable graph I/O). This is intended to be the open-source, ROS-free “engine” that pairs naturally with the SIMD-accelerated VAMP collision backend.
+
+This build sets `MR_PLANNER_WITH_ROS=0` and does not link against ROS / MoveIt.
 
 ## Build
 

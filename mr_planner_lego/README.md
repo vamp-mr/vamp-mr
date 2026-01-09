@@ -1,6 +1,6 @@
 # mr_planner_lego
 
-Standalone LEGO “application” built on top of `mr_planner_core`. It provides CLI tools for:
+Standalone (non-ROS) LEGO “application” built on top of `mr_planner_core`. It provides ROS-free CLI tools for:
 - LEGO task assignment (generate steps CSV/JSON)
 - LEGO planning (VAMP collision checking + multi-robot planning + ADG construction + portable export)
 
@@ -20,16 +20,7 @@ To build against an installed `mr_planner_core` (recommended for a split repo re
 ```bash
 cmake -S mr_planner_lego -B mr_planner_lego/build \
   -DCMAKE_BUILD_TYPE=Release \
-  -DMR_PLANNER_LEGO_USE_BUNDLED_CORE=OFF \
-  -Dmr_planner_core_DIR=/usr/local
-```
-
-## Install + `find_package()`
-
-```bash
-cmake -S mr_planner_lego -B mr_planner_lego/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/mr_planner_install
-cmake --build mr_planner_lego/build -j
-cmake --install mr_planner_lego/build
+  -DMR_PLANNER_LEGO_USE_BUNDLED_CORE=OFF
 ```
 
 Consumer CMake:

@@ -7,7 +7,7 @@ class PlanInstance;
 namespace mr_planner::vamp_plugin
 {
 // Bump when the plugin interface changes in a breaking way.
-inline constexpr std::uint32_t kAbiVersion = 1;
+inline constexpr std::uint32_t kAbiVersion = 2;
 
 struct Api
 {
@@ -24,4 +24,3 @@ extern "C"
 // The returned pointer must remain valid for the lifetime of the plugin.
 const mr_planner::vamp_plugin::Api *mr_planner_vamp_plugin_get_api();
 }
-

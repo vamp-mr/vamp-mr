@@ -37,6 +37,12 @@ if [[ -z "${prefix}" ]]; then
   cmake --install "${core_build}"
 fi
 
+echo "[info] running IK smoke on built-in env panda_two" >&2
+"${prefix}/bin/mr_planner_core_ik_test" \
+  --vamp-environment panda_two \
+  --seed "${MR_PLANNER_PLUGIN_SMOKE_SEED:-1}" \
+  --samples 3 >/dev/null
+
 for d in "${prefix}/lib/cmake/mr_planner_core" "${prefix}/lib64/cmake/mr_planner_core"; do
   if [[ -d "${d}" ]]; then
     core_cmake_dir="${d}"
@@ -131,6 +137,13 @@ echo "[info] planning with built-in env panda_two using sampled start/goal" >&2
 
 echo "[info] planning with plugin env ${plugin_env} using the same start/goal" >&2
 export MR_PLANNER_VAMP_ENV_PATH="${plugin_dir}"
+
+echo "[info] running IK smoke on plugin env ${plugin_env}" >&2
+"${prefix}/bin/mr_planner_core_ik_test" \
+  --vamp-environment "${plugin_env}" \
+  --seed "${seed}" \
+  --samples 3 >/dev/null
+
 "${prefix}/bin/mr_planner_core_plan" \
   --vamp-environment "${plugin_env}" \
   --planner composite_rrt \

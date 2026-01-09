@@ -1,0 +1,13 @@
+.git
+.github
+.vscode
+
+**/build/
+**/build-*/
+**/build_*/
+**/build-release/
+**/build_bundled/
+
+outputs/
+docs/
+

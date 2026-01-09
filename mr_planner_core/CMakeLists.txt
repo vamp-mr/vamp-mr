@@ -16,7 +16,6 @@ include(GNUInstallDirs)
 
 find_package(Eigen3 3.4 REQUIRED NO_MODULE)
 find_package(Boost REQUIRED COMPONENTS system filesystem date_time thread serialization)
-find_package(ompl REQUIRED)
 find_package(OpenMP REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -89,7 +88,6 @@ target_compile_definitions(mr_planner_core PRIVATE _OS_UNIX)
 
 target_include_directories(mr_planner_core SYSTEM PUBLIC
   ${Boost_INCLUDE_DIRS}
-  ${OMPL_INCLUDE_DIRS}
   ${Protobuf_INCLUDE_DIRS}
 )
 
@@ -106,7 +104,6 @@ target_link_libraries(mr_planner_core PUBLIC
   Boost::date_time
   Boost::thread
   Boost::serialization
-  ${OMPL_LIBRARIES}
   yaml-cpp
   jsoncpp_lib
   ${Protobuf_LIBRARIES}
@@ -150,6 +147,16 @@ if(MR_PLANNER_CORE_STANDALONE)
     target_link_libraries(mr_planner_core_skillplan_to_tpg PRIVATE mr_planner_core)
     if(UNIX AND NOT APPLE)
       set_target_properties(mr_planner_core_skillplan_to_tpg PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+      )
+    endif()
+
+    add_executable(mr_planner_core_ik_test
+      apps/mr_planner_core_ik_test.cpp
+    )
+    target_link_libraries(mr_planner_core_ik_test PRIVATE mr_planner_core)
+    if(UNIX AND NOT APPLE)
+      set_target_properties(mr_planner_core_ik_test PROPERTIES
         INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
       )
     endif()
@@ -261,6 +268,12 @@ if(MR_PLANNER_CORE_STANDALONE)
 
   if(TARGET mr_planner_core_skillplan_to_tpg)
     install(TARGETS mr_planner_core_skillplan_to_tpg
+      RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    )
+  endif()
+
+  if(TARGET mr_planner_core_ik_test)
+    install(TARGETS mr_planner_core_ik_test
       RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     )
   endif()

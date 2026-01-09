@@ -3,6 +3,7 @@
 import argparse
 import csv
 import statistics
+import sys
 import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -59,6 +60,14 @@ def find_repo_root() -> Path:
         if (maybe_monorepo / "mr_planner_lego").is_dir() and (maybe_monorepo / "launch").is_dir():
             return maybe_monorepo
     return core_root
+
+
+def maybe_prepend_local_mr_planner_core(repo_root: Path) -> None:
+    """Prefer an in-tree pybind build over any globally installed package."""
+    candidate = repo_root / "build" / "mr_planner_core" / "python"
+    pkg_init = candidate / "mr_planner_core" / "__init__.py"
+    if pkg_init.is_file():
+        sys.path.insert(0, str(candidate))
 
 
 def find_srdf(repo_root: Path, env: str) -> Path:
@@ -236,6 +245,24 @@ def main() -> int:
     parser.add_argument("--roadmap-samples", type=int, default=5000)
     parser.add_argument("--roadmap-max-dist", type=float, default=2.0)
     parser.add_argument(
+        "--roadmap-file",
+        default="auto",
+        help=(
+            "Optional prebuilt CBS roadmap file to load (boost archive). "
+            "Use 'auto' to load <repo_root>/outputs/cbs_roadmap/<env>.roadmap (if it exists). "
+            "Use 'none' to always build roadmaps in-memory."
+        ),
+    )
+    parser.add_argument(
+        "--roadmap-seed",
+        type=int,
+        default=None,
+        help=(
+            "Seed for CBS roadmap generation. Default uses --seed. "
+            "Use -1 for a random roadmap seed while keeping --seed fixed for planning."
+        ),
+    )
+    parser.add_argument(
         "--min-success-rate",
         type=float,
         default=0.0,
@@ -254,9 +281,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    repo_root = find_repo_root()
+    maybe_prepend_local_mr_planner_core(repo_root)
+
     import mr_planner_core
 
-    repo_root = find_repo_root()
+    print(f"[bench] mr_planner_core from {mr_planner_core.__file__}")
     out_root = Path(args.output_dir)
     case_root = out_root / "cases"
 
@@ -276,6 +306,27 @@ def main() -> int:
         pose_candidates = preferred + [p for p in srdf_poses if p not in set(preferred)]
 
         env_instance = mr_planner_core.VampEnvironment(env_name, vmax=args.vmax, seed=args.seed)
+        roadmap_file = (args.roadmap_file or "").strip()
+        if "cbs_prm" in planners and roadmap_file and roadmap_file.lower() != "none":
+            if not hasattr(env_instance, "load_roadmaps"):
+                raise RuntimeError(
+                    "mr_planner_core.VampEnvironment.load_roadmaps is unavailable in this build; "
+                    "rebuild mr_planner_core python bindings (see mr_planner_core/CMakeLists.txt)."
+                )
+
+            if roadmap_file == "auto":
+                roadmap_path = repo_root / "outputs" / "cbs_roadmap" / f"{env_name}.roadmap"
+                if roadmap_path.is_file():
+                    print(f"[bench] loading roadmap_file={roadmap_path}")
+                    env_instance.load_roadmaps(str(roadmap_path))
+                else:
+                    print(f"[bench] roadmap_file=auto not found ({roadmap_path}); building roadmaps in-memory")
+            else:
+                roadmap_path = Path(roadmap_file)
+                if not roadmap_path.is_file():
+                    raise FileNotFoundError(f"--roadmap-file {roadmap_file} does not exist")
+                print(f"[bench] loading roadmap_file={roadmap_path}")
+                env_instance.load_roadmaps(str(roadmap_path))
 
         pose_matrix: Dict[str, List[List[float]]] = {}
         valid_pose_names: List[str] = []
@@ -324,6 +375,7 @@ def main() -> int:
                         planning_time=args.planning_time,
                         shortcut_time=0.0,
                         seed=args.seed,
+                        roadmap_seed=args.roadmap_seed,
                         dt=args.dt,
                         vmax=args.vmax,
                         start=pose_matrix[start_pose],

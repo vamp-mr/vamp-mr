@@ -11,11 +11,19 @@ This codebase, VAMP-MR, is the collection of
 
 **TLDR:** Building on the CPU SIMD accelerated single-robot motion planner [VAMP](https://github.com/KavrakiLab/vamp), we accelerate the motion generation, postprocessing, and execution for multi-arm manipulation tasks by 10x-100x. 
 
-<p align="center">
-  <video src="docs/resources/panda_four_move1_crop.mp4?raw=1" controls autoplay muted loop playsinline style="max-width: 100%; border-radius: 6px"></video>
-</p>
-
 ## Installation
+
+
+### Local Install Script (VAMP + core + LEGO)
+
+This installs to `/usr/local` by default (uses `sudo` if needed), and builds into:
+- `vamp/build`
+- `mr_planner_core/build`
+- `mr_planner_lego/build`
+
+```bash
+./scripts/setup/install_vamp_mr.sh --prefix /usr/local --with-vamp
+```
 
 ### Step by step instruction.
 
@@ -26,7 +34,8 @@ This codebase, VAMP-MR, is the collection of
 If you keep VAMP at `~/Code/vamp` and install it to `/usr/local`:
 
 ```bash
-cmake -S vamp -B vamp/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake -S vamp -B vamp/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DVAMP_INSTALL_CPP_LIBRARY=ON -DVAMP_BUILD_PYTHON_BINDINGS=OFF
 cmake --build vamp/build -j
 sudo cmake --install vamp/build
 ```
@@ -44,9 +53,21 @@ sudo cmake --install mr_planner_core/build
 
 #### c) Build mr_planner_lego
 ```bash
-cmake -S mr_planner_lego -B mr_planner_lego/build -DCMAKE_BUILD_TYPE=Release
+cmake -S mr_planner_lego -B mr_planner_lego/build -DCMAKE_BUILD_TYPE=Release \
+  -DMR_PLANNER_LEGO_USE_BUNDLED_CORE=OFF \
+  -DCMAKE_PREFIX_PATH=/usr/local
 cmake --build mr_planner_lego/build -j
+sudo cmake --install mr_planner_lego/build
 ```
+
+### Build with Docker
+
+```bash
+docker build -f docker/Dockerfile -t vamp-mr:latest .
+docker run --rm -it vamp-mr:latest bash
+```
+
+Inside the container, `vamp`, `mr_planner_core`, and `mr_planner_lego` are installed to `/usr/local` (binaries under `/usr/local/bin`).
 
 ## How to reproduce experiments from the paper
 
