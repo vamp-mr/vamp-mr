@@ -11,6 +11,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -29,4 +33,3 @@ jobs:
         run: |
           docker run --rm vamp-mr:ci bash -lc "mr_planner_lego_plan --help >/dev/null"
           docker run --rm vamp-mr:ci bash -lc "mr_planner_lego_assign --help >/dev/null"
-

@@ -24,6 +24,33 @@ endif()
 set(MR_PLANNER_CORE_ENABLE_VAMP "@MR_PLANNER_CORE_ENABLE_VAMP@")
 if(MR_PLANNER_CORE_ENABLE_VAMP)
   find_dependency(vamp CONFIG)
+
+  # VAMP's exported target references nigh::nigh and pdqsort::pdqsort. In some
+  # layouts these may not be imported automatically, so opportunistically load
+  # the installed target files from the VAMP prefix.
+  if((NOT TARGET nigh::nigh) OR (NOT TARGET pdqsort::pdqsort))
+    set(_mr_planner_vamp_prefix "")
+    if(DEFINED vamp_DIR)
+      get_filename_component(_mr_planner_vamp_prefix "${vamp_DIR}/../../.." ABSOLUTE)
+    endif()
+    foreach(_mr_planner_libdir IN ITEMS lib lib64 "lib/x86_64-linux-gnu")
+      if(_mr_planner_vamp_prefix)
+        set(_mr_planner_nigh_targets "${_mr_planner_vamp_prefix}/${_mr_planner_libdir}/cmake/nigh/nighTargets.cmake")
+        if(EXISTS "${_mr_planner_nigh_targets}" AND NOT TARGET nigh::nigh)
+          include("${_mr_planner_nigh_targets}")
+        endif()
+
+        set(_mr_planner_pdqsort_targets "${_mr_planner_vamp_prefix}/${_mr_planner_libdir}/cmake/pdqsort/pdqsortTargets.cmake")
+        if(EXISTS "${_mr_planner_pdqsort_targets}" AND NOT TARGET pdqsort::pdqsort)
+          include("${_mr_planner_pdqsort_targets}")
+        endif()
+      endif()
+    endforeach()
+    unset(_mr_planner_pdqsort_targets)
+    unset(_mr_planner_nigh_targets)
+    unset(_mr_planner_libdir)
+    unset(_mr_planner_vamp_prefix)
+  endif()
 endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/mr_planner_coreTargets.cmake")

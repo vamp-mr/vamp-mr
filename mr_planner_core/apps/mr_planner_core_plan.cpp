@@ -650,6 +650,8 @@ int main(int argc, char **argv)
             sc.t_limit = args.shortcut_time;
             sc.dt = args.dt;
             sc.seed = args.seed;
+            // default to thompson shortcutting.
+            sc.thompson_selector = true;
             sc.progress_file = (std::filesystem::path(args.output_dir) / "shortcut_progress.csv").string();
             Shortcutter shortcutter(instance, sc);
             MRTrajectory shortcut;
