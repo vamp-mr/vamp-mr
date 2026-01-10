@@ -33,3 +33,12 @@ jobs:
         run: |
           docker run --rm vamp-mr:ci bash -lc "mr_planner_lego_plan --help >/dev/null"
           docker run --rm vamp-mr:ci bash -lc "mr_planner_lego_assign --help >/dev/null"
+
+      - name: Python smoke test (no rebuild)
+        env:
+          MR_PLANNER_PY_SMOKE_USE_EXISTING: "1"
+        run: |
+          docker run --rm \
+            -e MR_PLANNER_PY_SMOKE_USE_EXISTING \
+            vamp-mr:ci \
+            bash -lc "mr_planner_core/scripts/regression/run_python_smoke.sh"

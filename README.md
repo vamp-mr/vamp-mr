@@ -69,6 +69,90 @@ docker run --rm -it vamp-mr:latest bash
 
 Inside the container, `vamp`, `mr_planner_core`, and `mr_planner_lego` are installed to `/usr/local` (binaries under `/usr/local/bin`).
 
+## Examples
+
+### Core planning (C++ CLI)
+
+Plan a random, collision-free problem (writes `solution.csv`, `skillplan.json`, and `tpg.pb`):
+
+```bash
+mr_planner_core_plan \
+  --vamp-environment dual_gp4 \
+  --planner composite_rrt \
+  --planning-time 5 \
+  --output-dir outputs/core_plan
+```
+
+Plan + shortcut (enables postprocessing; writes `shortcut_progress.csv` as well):
+
+```bash
+mr_planner_core_plan \
+  --vamp-environment dual_gp4 \
+  --planner composite_rrt \
+  --planning-time 5 \
+  --shortcut-time 1 \
+  --output-dir outputs/core_plan_shortcut
+```
+
+Plan a specific start/goal (2 robots, 7-DOF each):
+
+```bash
+mr_planner_core_plan \
+  --vamp-environment dual_gp4 \
+  --start "0,0,0,0,0,0,0;0,0,0,0,0,0,0" \
+  --goal  "0.2,0,0,0,0,0,0;0,0.2,0,0,0,0,0" \
+  --planning-time 5 \
+  --shortcut-time 1 \
+  --output-dir outputs/core_plan_custom
+```
+
+### LEGO assign + plan (C++ CLI)
+
+From the repo root (or pass `--root /path/to/vamp-mr`):
+
+```bash
+mkdir -p outputs/lego_steps outputs/lego_out
+
+mr_planner_lego_assign \
+  --task test \
+  --output-dir outputs/lego_steps \
+  --vamp-environment dual_gp4
+
+mr_planner_lego_plan \
+  --task test \
+  --steps-dir outputs/lego_steps \
+  --output-dir outputs/lego_out/test \
+  --vamp-environment dual_gp4 \
+  --planning-time 5 \
+  --shortcut-time 0 \
+  --seed 1
+```
+
+Outputs:
+- `outputs/lego_out/test/adg.pb`
+- `outputs/lego_out/test/skillplan.json`
+
+### Build a graph from a `skillplan.json` (with optional shortcutting)
+
+```bash
+mr_planner_core_skillplan_to_tpg \
+  --skillplan outputs/lego_out/test/skillplan.json \
+  --graph-type adg \
+  --vamp-environment dual_gp4 \
+  --shortcut-time 1 \
+  --output-dir outputs/lego_out/test
+```
+
+## Visualization 
+We use [meshcat](https://github.com/meshcat-dev/meshcat-python) as a visualization server. Since our planning is kinematic-only, so we directly update the trajectories of the robot and any obstacles in the environment via the [meshcat_bridge.py](mr_planner_core/scripts/visualization/meshcat_bridge.py).
+
+To view animation, start the meshcat_bridge.py in a new terminal window
+```bash
+python3 mr_planner_core/scripts/visualization/meshcat_bridge.py
+```
+and run our examples with the ```--meshcat``` flag.
+The visualization can be viewed in your browser at http://127.0.0.1:7000/static/ or any another port. 
+
 ## How to reproduce experiments from the paper
 
 ### Collision checking benchmark

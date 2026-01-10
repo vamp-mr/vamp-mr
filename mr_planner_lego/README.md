@@ -39,7 +39,7 @@ Both CLIs need access to the repo’s `config/` files. Either run them from the 
 Generates step files from `config/lego_tasks/assembly_tasks/<task>.json`:
 
 ```bash
-./build/mr_planner_lego/mr_planner_lego_assign \
+./mr_planner_lego/build/mr_planner_lego_assign \
   --task test \
   --root /path/to/mr_planner \
   --output-dir /tmp/mr_steps \
@@ -56,7 +56,7 @@ Outputs:
 Consumes `<task>_steps.csv` and exports a portable ADG protobuf + `skillplan.json`:
 
 ```bash
-./build/mr_planner_lego/mr_planner_lego_plan \
+./mr_planner_lego/build/mr_planner_lego_plan \
   --task test \
   --root /path/to/mr_planner \
   --steps-dir /tmp/mr_steps \
@@ -81,7 +81,7 @@ python3 mr_planner_core/scripts/visualization/meshcat_bridge.py --port 7600
 Then add `--meshcat` to the CLIs:
 
 ```bash
-./build/mr_planner_lego/mr_planner_lego_plan \
+./mr_planner_lego/build/mr_planner_lego_plan \
   --task test \
   --root /path/to/mr_planner \
   --steps-dir /tmp/mr_steps \
