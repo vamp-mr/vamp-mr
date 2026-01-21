@@ -75,14 +75,13 @@
               </div>
 
               <div class="column has-text-centered">
-                <div class="content is-size-6" style="margin-top: 0.5rem">
-                  <a href="#abstract">Abstract</a> ·
-                  <a href="#collision-checking">Collision Checking</a> ·
-                  <a href="#planning">Planning</a> ·
-                  <a href="#shortcutting">Shortcutting</a> ·
-                  <a href="#lego-assembly">LEGO Assembly</a> ·
-                  <a href="#code">Code</a> ·
-                  <a href="#citation">Citation</a>
+                <div class="vamp-contrib">
+                  <p class="vamp-contrib-line vamp-contrib-line--primary">
+                    We introduce a fast, general-purpose collision checker for multi-robot arms
+                  </p>
+                  <p class="vamp-contrib-line vamp-contrib-line--secondary">
+                    which speeds up planning, shortcutting, and building execution graph by <strong>10x-100x</strong>
+                  </p>
                 </div>
               </div>
 
@@ -92,14 +91,41 @@
       </div>
     </section>
 
+    <div class="vamp-layout">
+      <aside class="vamp-sidenav">
+        <nav class="menu">
+          <p class="menu-label">Sections</p>
+          <ul class="menu-list">
+            <li><a href="#abstract">Abstract</a></li>
+            <li><a href="#collision-checking">Collision Checking</a></li>
+            <li><a href="#planning">Planning</a></li>
+            <li><a href="#shortcutting">Shortcutting</a></li>
+            <li><a href="#lego-assembly">LEGO Assembly</a></li>
+            <li><a href="#code">Code</a></li>
+            <li><a href="#citation">Citation</a></li>
+          </ul>
+        </nav>
+      </aside>
+      <main class="vamp-main">
     <section class="hero teaser">
       <div class="container is-max-desktop">
         <div class="hero-body">
           <figure class="image">
-            <img src="./resources/vamp_approximation.png" alt="Vectorized multi-robot collision checking speedup and illustration." />
+            <video
+              controls
+              autoplay
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              style="width: 100%; border-radius: 6px"
+            >
+              <source src="./resources/kinova%20vamp%202x.mp4" type="video/mp4" />
+              Your browser does not support the video tag.
+            </video>
           </figure>
           <p class="has-text-centered is-size-6" style="margin-top: 0.75rem">
-            Figure 1: vectorized multi-robot collision checking achieves up to 148x motion-validation speedup.
+            Real-robot execution (2× speed).
           </p>
         </div>
       </div>
@@ -129,6 +155,12 @@
         <div class="columns is-centered">
           <div class="column is-four-fifths">
             <h2 class="title is-3" id="collision-checking">Vectorized Multi-Robot Collision Checking</h2>
+            <figure class="image" style="margin-top: 0.75rem">
+              <img src="./resources/vamp_approximation.png" alt="Vectorized multi-robot collision checking speedup and illustration." />
+            </figure>
+            <p class="has-text-centered is-size-6" style="margin-top: 0.75rem">
+              Figure 1: vectorized multi-robot collision checking achieves up to 148x motion-validation speedup.
+            </p>
             <div class="content has-text-justified">
               <p>
                 VAMP-MR makes motion validation fast: CPU-SIMD vectorized forward kinematics and collision checking enable high-throughput evaluation over batches of multi-robot configurations.
@@ -213,7 +245,7 @@
               </p>
             </div>
             <figure class="image">
-              <img src="./resources/planning_time_boxplots.png" alt="Planning time comparison plot." />
+              <img src="./resources/planning_time_boxplots2.png" alt="Planning time comparison plot." />
             </figure>
           </div>
         </div>
@@ -231,13 +263,37 @@
               </p>
             </div>
             <figure class="image">
-              <img src="./resources/vamp_runtime_comparison.png" alt="Shortcutting makespan improvement over time." />
+              <img src="./resources/vamp_runtime_comparison2.png" alt="Shortcutting makespan improvement over time." />
             </figure>
             <div class="content has-text-justified" style="margin-top: 1.5rem">
               <p>
                 Example RRT planning + shortcutting rollout:
               </p>
             </div>
+	          </div>
+	        </div>
+	      </div>
+
+	      <div class="container is-max-fullhd" style="margin-top: 0.5rem">
+	        <div class="columns is-variable is-4">
+	          <div class="column">
+	            <figure class="image" style="margin-top: 0.75rem">
+	              <video
+                controls
+                autoplay
+                muted
+                loop
+                playsinline
+                preload="metadata"
+                style="width: 100%; border-radius: 6px"
+              >
+                <source src="./resources/panda_two_rod_4x.mp4" type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            </figure>
+            <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Panda Two Rod</p>
+          </div>
+          <div class="column">
             <figure class="image" style="margin-top: 0.75rem">
               <video
                 controls
@@ -248,17 +304,30 @@
                 preload="metadata"
                 style="width: 100%; border-radius: 6px"
               >
-                <source src="./resources/panda_four_move1_crop.mp4" type="video/mp4" />
+                <source src="./resources/panda_four_bins_4x.mp4" type="video/mp4" />
                 Your browser does not support the video tag.
               </video>
             </figure>
-            <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">
-              Panda Four 
-            </p>
+            <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Panda Four Bins</p>
+          </div>
+          <div class="column">
+            <figure class="image" style="margin-top: 0.75rem">
+              <video
+                controls
+                autoplay
+                muted
+                loop
+                playsinline
+                preload="metadata"
+                style="width: 100%; border-radius: 6px"
+              >
+                <source src="./resources/panda_four_4x.mp4" type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            </figure>
+            <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Panda Four</p>
           </div>
         </div>
-
-            
       </div>
     </section>
 
@@ -347,26 +416,79 @@
 
             <div class="content has-text-justified" style="margin-top: 1.5rem">
               <p>
-                Chair assembly rollout (video):
+                Assembly executions (all videos are 10× speed):
               </p>
             </div>
-            <figure class="image" style="margin-top: 0.75rem">
-              <video
-                controls
-                autoplay
-                muted
-                loop
-                playsinline
-                preload="metadata"
-                style="width: 100%; border-radius: 6px"
-              >
-                <source src="./resources/chair_web.mp4" type="video/mp4" />
-                Your browser does not support the video tag.
-              </video>
-            </figure>
-            <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">
-              Chair task assembly execution (video).
-            </p>
+            <div class="columns is-variable is-4 is-multiline">
+              <div class="column is-half">
+                <figure class="image" style="margin-top: 0.75rem">
+                  <video
+                    controls
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    style="width: 100%; border-radius: 6px"
+                  >
+                    <source src="./resources/lego_cliff_meshcat.mp4" type="video/mp4" />
+                    Your browser does not support the video tag.
+                  </video>
+                </figure>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Cliff</p>
+              </div>
+              <div class="column is-half">
+                <figure class="image" style="margin-top: 0.75rem">
+                  <video
+                    controls
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    style="width: 100%; border-radius: 6px"
+                  >
+                    <source src="./resources/lego_guitar_meshcat.mp4" type="video/mp4" />
+                    Your browser does not support the video tag.
+                  </video>
+                </figure>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Vessel</p>
+              </div>
+              <div class="column is-half">
+                <figure class="image" style="margin-top: 0.75rem">
+                  <video
+                    controls
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    style="width: 100%; border-radius: 6px"
+                  >
+                    <source src="./resources/lego_rss_meshcat.mp4" type="video/mp4" />
+                    Your browser does not support the video tag.
+                  </video>
+                </figure>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">RSS</p>
+              </div>
+              <div class="column is-half">
+                <figure class="image" style="margin-top: 0.75rem">
+                  <video
+                    controls
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                    preload="metadata"
+                    style="width: 100%; border-radius: 6px"
+                  >
+                    <source src="./resources/lego_chair_meshcat.mp4" type="video/mp4" />
+                    Your browser does not support the video tag.
+                  </video>
+                </figure>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Chair</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -423,6 +545,9 @@ res = env.plan(planner="composite_rrt", planning_time=5.0, shortcut_time=0.1, se
         </div>
       </div>
     </section>
+
+      </main>
+    </div>
 
     <footer class="footer">
       <div class="container">

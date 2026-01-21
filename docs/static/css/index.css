@@ -187,3 +187,70 @@ body {
 pre {
   overflow-x: auto;
 }
+
+.vamp-layout {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+.vamp-sidenav {
+  position: sticky;
+  top: 1rem;
+  align-self: start;
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  padding-top: 1rem;
+}
+
+.vamp-main {
+  min-width: 0;
+}
+
+.vamp-contrib {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.75rem;
+  justify-items: center;
+}
+
+.vamp-contrib-line {
+  display: inline-block;
+  padding: 0.9rem 1.1rem;
+  border-radius: 12px;
+  font-family: 'Google Sans', sans-serif;
+  font-size: 1.35rem;
+  line-height: 1.25;
+  font-weight: 600;
+  max-width: 60rem;
+}
+
+.vamp-contrib-line--primary {
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.vamp-contrib-line--secondary {
+  background: #fef3c7;
+  color: #7c2d12;
+}
+
+@media screen and (max-width: 1215px) {
+  .vamp-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .vamp-sidenav {
+    display: none;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .vamp-contrib-line {
+    font-size: 1.1rem;
+    padding: 0.8rem 1rem;
+  }
+}

@@ -94,7 +94,7 @@ mr_planner_core_plan \
   --output-dir outputs/core_plan_shortcut
 ```
 
-Plan a specific start/goal (2 robots, 7-DOF each):
+Plan + shortcut a specific start/goal (2 robots, 7-DOF each):
 
 ```bash
 mr_planner_core_plan \

@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     protobuf-compiler \
   && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/vamp-mr
+WORKDIR /root/vamp-mr
 COPY . .
 
 RUN ./scripts/setup/install_vamp_mr.sh --prefix /usr/local --type Release --with-vamp --no-sudo
