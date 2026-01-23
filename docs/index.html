@@ -167,7 +167,7 @@
               </p>
             </div>
             <p class="content has-text-justified">
-              Table 1 : average collision checking time over 10,000 random samples. “Single” checks a single set of multi-robot configurations; “Motion” validates a motion segment between two configurations.
+              Table 1 : Average collision checking time over 10,000 random samples. “Single” checks a single set of multi-robot configurations; “Motion” validates a motion segment between two configurations.
             </p>
             <div class="table-container">
               <table class="table is-fullwidth is-striped is-hoverable is-size-7 result-table">
@@ -338,7 +338,7 @@
             <h2 class="title is-3" id="lego-assembly">LEGO Assembly</h2>
             <div class="content has-text-justified">
               <p>
-                We evaluate long-horizon dual-arm LEGO assembly tasks (APEX-MR pipeline) and measure runtime across task assignment, motion planning, and TPG construction.
+                We evaluate long-horizon dual-arm LEGO assembly tasks described in <a href="https://github.com/intelligent-control-lab/APEX-MR">APEX-MR</a> and measure runtime across task assignment, motion planning, and TPG construction.
               </p>
             </div>
 
@@ -435,7 +435,7 @@
                     Your browser does not support the video tag.
                   </video>
                 </figure>
-                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Cliff</p>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Cliff (11 bricks)</p>
               </div>
               <div class="column is-half">
                 <figure class="image" style="margin-top: 0.75rem">
@@ -452,7 +452,7 @@
                     Your browser does not support the video tag.
                   </video>
                 </figure>
-                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Vessel</p>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Vessel (36 bricks)</p>
               </div>
               <div class="column is-half">
                 <figure class="image" style="margin-top: 0.75rem">
@@ -469,7 +469,7 @@
                     Your browser does not support the video tag.
                   </video>
                 </figure>
-                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">RSS</p>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">RSS (47 bricks)</p>
               </div>
               <div class="column is-half">
                 <figure class="image" style="margin-top: 0.75rem">
@@ -486,7 +486,7 @@
                     Your browser does not support the video tag.
                   </video>
                 </figure>
-                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Chair</p>
+                <p class="has-text-centered is-size-11" style="margin-top: 0.5rem">Chair (258 bricks)</p>
               </div>
             </div>
           </div>
@@ -532,7 +532,7 @@ res = env.plan(planner="composite_rrt", planning_time=5.0, shortcut_time=0.1, se
           <div class="column is-four-fifths">
             <h2 class="title is-3">Citation</h2>
             <div class="content has-text-justified">
-              <p>For now, please cite the project website (workshop attribution can be updated later).</p>
+              <p>For now, please cite the project website based on the workshop version</p>
             </div>
             <pre><code>@misc{vamp_mr_website,
   title        = {VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms},
@@ -548,6 +548,128 @@ res = env.plan(planner="composite_rrt", planning_time=5.0, shortcut_time=0.1, se
 
       </main>
     </div>
+
+    <section class="section">
+      <div class="columns is-centered">
+        <div class="column is-full-width">
+          <div class="is-vcentered interpolation-panel">
+            <h2 class="title is-2" style="text-align: center;">Related Works</h2>
+            <div class="content is-centered has-text-centered">
+              This work is part of our research on <strong>Multi-Robot Task and Motion Planning</strong> and <strong>generative LEGO assembly</strong>.
+              Please explore our other works below.
+            </div>
+
+            <div class="container">
+              <div class="columns is-vcentered">
+                <!-- Image Column -->
+                <div class="column is-4">
+                  <figure class="image">
+                    <img src="./resources/apex.gif" alt="RMA Image">
+                  </figure>
+                </div>
+
+                <!-- Text Column -->
+                <div class="column is-8">
+                  <h2 class="title is-4">APEX-MR: Multi-Robot Asynchronous Planning and Execution for Cooperative Assembly </h2>
+                  <p>
+                    Philip Huang*, Ruixuan Liu*, Shobhit Aggarwal, Changliu Liu, and Jiaoyang Li
+                    <br />
+                    RSS, 2025
+                  </p>
+                  <p>
+                    <a href="https://arxiv.org/abs/2503.15836"
+                      class="button is-link">Paper</a>
+                                   <a href="https://intelligent-control-lab.github.io/APEX-MR/" class="button is-link">Website</a>
+                    <!--                <a href="https://ashish-kmr.github.io/rma-legged-robots/" class="button is-link">Project Page</a>-->
+                  </p>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="container">
+              <div class="columns is-vcentered">
+                <!-- Image Column -->
+                <div class="column is-4">
+                  <figure class="image">
+                    <img src="./resources/p2p.gif" alt="RMA Image">
+                  </figure>
+                </div>
+
+                <!-- Text Column -->
+                <div class="column is-8">
+                  <h2 class="title is-4">Prompt-to-Product: Generative Assembly via Bimanual Manipulation </h2>
+                  <p>
+                    Ruixuan Liu* , Philip Huang*, Ava Pun, Kangle Deng, Shobhit Agarwal, Kevin Tang, Michelle Liu, Deva Ramanan, Jun-Yan Zhu, Jiaoyang Li, Changliu Liu
+                    <br />
+                    Preprint, 2025
+                  </p>
+                  <p>
+                    <a href="https://arxiv.org/abs/2508.21063"
+                      class="button is-link">Preprint</a>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+
+            <div class="container">
+              <div class="columns is-vcentered">
+                <!-- Image Column -->
+                <div class="column is-4">
+                  <figure class="image">
+                    <img src="./resources/mr-shortcut-compressed.gif" alt="RMA Image">
+                  </figure>
+                </div>
+
+                <!-- Text Column -->
+                <div class="column is-8">
+                  <h2 class="title is-4">Benchmarking Shortcutting Techniques for Multi-Robot Arm Motion Planning </h2>
+                  <p>
+                    Philip Huang, Yorai Shaoul, Jiaoyang Li
+                    <br />
+                    IROS, 2025
+                  </p>
+                  <p>
+                    <a href="https://arxiv.org/pdf/2508.05027v1" class="button is-link">Paper</a>
+                    <a href="https://philip-huang.com/mr-shortcut/"
+                      class="button is-link">Website</a>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="container">
+              <div class="columns is-vcentered">
+                <!-- Image Column -->
+                <div class="column is-4">
+                  <figure class="image">
+                    <img src="./resources/mramp-icaps2024.gif" alt="RMA Image">
+                  </figure>
+                </div>
+
+                <!-- Text Column -->
+                <div class="column is-8">
+                  <h2 class="title is-4"> Accelerating Search-Based Planning for Multi-Robot Manipulation by Leveraging Online-Generated Experiences   </h2>
+                  <p>
+                    Yorai Shaoul*, Itamar Mishani*, Maxim Likhachev,  Jiaoyang Li
+                    <br />
+                    ICAPS, 2024
+                  </p>
+                  <p>
+                    <a href="https://arxiv.org/abs/2404.00143"
+                      class="button is-link">Paper</a>
+                      <a href="https://x-cbs.github.io/" class="button is-link">Website</a>
+                    <!--                <a href="https://ashish-kmr.github.io/rma-legged-robots/" class="button is-link">Project Page</a>-->
+                  </p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </section>
 
     <footer class="footer">
       <div class="container">
