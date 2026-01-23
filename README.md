@@ -1,13 +1,10 @@
 # VAMP-MR 
 
-Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms
 
 <div>
 <a href="https://vamp-mr.github.io/vamp-mr/"><img src="https://img.shields.io/badge/Project_Page-Website-green?logo=googlechrome&logoColor=white" alt="Project Page" height=22px></a>
 <a href="https://openreview.net/pdf?id=ePPOoz8KKp" target="_blank"><img src=https://img.shields.io/badge/ArXiv-Paper-b5212f.svg?logo=arxiv alt="ArXiv" height=22px></a>
 </div>
-
-![](docs/resources/vamp-kinova.gif)
 
 ***Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms***<br>
 [Philip Huang*](https://philip-huang.github.io/),
@@ -15,6 +12,8 @@ Chenrui Gao^,
 [Jiaoyang Li*](https://jiaoyangli.me/)<br>
 **Carnegie Mellon University*, *^University of Michigan*<br>
 Workshop for Multi-Agent Path Finding (WoMAPF) at AAAI 2026
+
+<img src="docs/resources/vamp-kinova.gif" width="100%"/>
 
 
 This codebase, VAMP-MR, is the collection of 
@@ -25,6 +24,8 @@ This codebase, VAMP-MR, is the collection of
 **TLDR:** Building on the CPU SIMD accelerated single-robot motion planner [VAMP](https://github.com/KavrakiLab/vamp), we accelerate the motion generation, postprocessing, and execution for multi-arm manipulation tasks by 10x-100x. 
 
 ## Installation
+
+macOS (Apple Silicon) instructions: `docs/INSTALL_MACOS_APPLE_SILICON.md`.
 
 
 ### Local Install Script (VAMP + core + LEGO)
