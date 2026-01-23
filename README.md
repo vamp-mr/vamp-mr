@@ -25,9 +25,6 @@ This codebase, VAMP-MR, is the collection of
 
 ## Installation
 
-macOS (Apple Silicon) instructions: `docs/INSTALL_MACOS_APPLE_SILICON.md`.
-
-
 ### Local Install Script (VAMP + core + LEGO)
 
 This installs to `/usr/local` by default (uses `sudo` if needed), and builds into:
