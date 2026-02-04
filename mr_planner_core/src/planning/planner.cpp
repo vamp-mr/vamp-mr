@@ -6,6 +6,7 @@
 #include <boost/algorithm/string.hpp>
 #include <algorithm>
 #include <limits>
+#include <numeric>
 #include <random>
 #if MR_PLANNER_WITH_ROS
 #include <moveit/planning_pipeline/planning_pipeline.h>
@@ -21,65 +22,139 @@ PriorityPlanner::PriorityPlanner(std::shared_ptr<PlanInstance> instance) : Abstr
 }
 
 bool PriorityPlanner::plan(const PlannerOptions &options) {
-    // Implement the planning algorithm using problem_instance_
+    solved = false;
+    solution_.clear();
+    planning_time_ = 0.0;
 
-    // set a randomized order
-    std::vector<int> order;
-    for (int i = 0; i < num_robots_; i++) {
-        order.push_back(i);
+    const auto overall_t0 = std::chrono::steady_clock::now();
+    const auto overall_deadline = overall_t0 + std::chrono::duration<double>(options.max_planning_time);
+
+    std::mt19937 rng;
+    if (options.rrt_seed >= 0)
+    {
+        rng.seed(static_cast<std::uint32_t>(options.rrt_seed));
     }
-    if (options.pp_random_order) {
+    else
+    {
         std::random_device rd;
-        std::mt19937 g(rd());
-        std::shuffle(order.begin(), order.end(), g);
+        rng.seed((static_cast<std::uint32_t>(rd()) << 1) ^ static_cast<std::uint32_t>(rd()));
     }
 
-    // iterate through the robots in the randomized order
-    MRTrajectory solution;
-    planning_time_ = 0;
-    for (int i = 0; i < num_robots_; i++) {
-        int robot_id = order[i];
-        
-        std::shared_ptr<SingleAgentPlanner> planner;
-        if (options.single_agent_planner == "STRRT") {
-            planner = std::make_shared<STRRT>(instance_, robot_id);
-        } else if (options.single_agent_planner == "SIPP_RRT") {
-            planner = std::make_shared<SIPP_RRT>(instance_, robot_id);
+    const auto make_order = [&](int attempt) {
+        std::vector<int> order(num_robots_);
+        std::iota(order.begin(), order.end(), 0);
+        const bool do_shuffle = options.pp_random_order || attempt > 0;
+        if (do_shuffle)
+        {
+            std::shuffle(order.begin(), order.end(), rng);
         }
-        else {
-            log("Unknown single agent planner: " + options.single_agent_planner, LogLevel::ERROR);
+        return order;
+    };
+
+    int attempt = 0;
+    while (std::chrono::steady_clock::now() < overall_deadline)
+    {
+        const auto attempt_t0 = std::chrono::steady_clock::now();
+        auto attempt_deadline = overall_deadline;
+        if (options.pp_restart_time_sec > 0.0)
+        {
+            attempt_deadline = std::min(attempt_deadline, attempt_t0 + std::chrono::duration<double>(options.pp_restart_time_sec));
+        }
+
+        if (options.rrt_seed >= 0)
+        {
+            // Re-seed the environment-level RNG to diversify sampling across restarts.
+            instance_->setRandomSeed(static_cast<unsigned int>(options.rrt_seed + attempt * 10007));
+        }
+
+        const std::vector<int> order = make_order(attempt);
+        MRTrajectory attempt_solution;
+        bool attempt_ok = true;
+
+        for (int i = 0; i < num_robots_; i++)
+        {
+            if (std::chrono::steady_clock::now() >= attempt_deadline || std::chrono::steady_clock::now() >= overall_deadline)
+            {
+                attempt_ok = false;
+                break;
+            }
+
+            const int robot_id = order[i];
+
+            std::shared_ptr<SingleAgentPlanner> planner;
+            if (options.single_agent_planner == "STRRT")
+            {
+                planner = std::make_shared<STRRT>(instance_, robot_id);
+            }
+            else if (options.single_agent_planner == "SIPP_RRT")
+            {
+                planner = std::make_shared<SIPP_RRT>(instance_, robot_id);
+            }
+            else
+            {
+                log("Unknown single agent planner: " + options.single_agent_planner, LogLevel::ERROR);
+                return false;
+            }
+
+            PlannerOptions option_i = options;
+
+            const auto now = std::chrono::steady_clock::now();
+            const auto hard_deadline = std::min(attempt_deadline, overall_deadline);
+            const double remaining = std::chrono::duration<double>(hard_deadline - now).count();
+            const int robots_left = std::max(1, num_robots_ - i);
+
+            option_i.max_planning_time = std::max(0.01, remaining / static_cast<double>(robots_left));
+            option_i.rrt_max_planning_time = option_i.max_planning_time;
+            option_i.obstacles = attempt_solution;
+
+            const auto tic = std::chrono::high_resolution_clock::now();
+            const bool solved_i = planner->plan(option_i);
+            const auto toc = std::chrono::high_resolution_clock::now();
+            planning_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(toc - tic).count() * 1e-9;
+
+            if (options.log_fname != "")
+            {
+                logProgressFileAppend(options.log_fname,
+                                      "r" + std::to_string(robot_id),
+                                      "r" + std::to_string(robot_id),
+                                      planning_time_,
+                                      planner->getPlanCost(),
+                                      planner->getPlanCost());
+            }
+
+            if (!solved_i)
+            {
+                attempt_ok = false;
+                break;
+            }
+
+            RobotTrajectory traj;
+            if (!planner->getPlan(traj))
+            {
+                attempt_ok = false;
+                break;
+            }
+            attempt_solution.push_back(std::move(traj));
+            log("Found plan for robot " + std::to_string(robot_id), LogLevel::HLINFO);
+        }
+
+        if (attempt_ok && static_cast<int>(attempt_solution.size()) == num_robots_)
+        {
+            solution_ = std::move(attempt_solution);
+            solved = true;
+            return true;
+        }
+
+        if (options.pp_restart_time_sec <= 0.0)
+        {
+            // No restarts requested; preserve legacy behavior.
             return false;
         }
-        PlannerOptions option_i = options;
-        option_i.max_planning_time = options.max_planning_time / num_robots_;
-        option_i.obstacles = solution;
-        
-        auto tic = std::chrono::high_resolution_clock::now();
-        bool solved = planner->plan(option_i);
-        auto toc = std::chrono::high_resolution_clock::now();
-        planning_time_ += std::chrono::duration_cast<std::chrono::nanoseconds>(toc - tic).count() * 1e-9;
-        log("Planning time for robot " + std::to_string(robot_id) + ": " + std::to_string(planning_time_), LogLevel::DEBUG);
 
-        if (options.log_fname != "") {
-            logProgressFileAppend(options.log_fname, "r" + std::to_string(robot_id),
-                                    "r" + std::to_string(robot_id), planning_time_, 
-                                    planner->getPlanCost(),  planner->getPlanCost());
-        }
-
-        if (solved) {
-            RobotTrajectory traj;
-            planner->getPlan(traj);
-            solution.push_back(traj);
-            log("Found plan for robot " + std::to_string(robot_id), LogLevel::HLINFO);
-        } else {
-            log("Failed to plan for robot " + std::to_string(robot_id) + "!", LogLevel::ERROR);
-            return false; // Return false if planning fails
-        }
+        attempt++;
     }
 
-    solution_ = solution;
-    solved = true;
-    return true; // Return true if planning succeeds
+    return false;
 }
 
 bool PriorityPlanner::getPlan(MRTrajectory &solution) const {

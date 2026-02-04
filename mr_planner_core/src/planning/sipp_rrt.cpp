@@ -1,771 +1,1140 @@
 #include "mr_planner/planning/sipp_rrt.h"
+
 #include "mr_planner/core/logger.h"
 
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <limits>
+#include <utility>
+
+// -----------------------------------------------------------------------------
+// SI-RRT (Safe-Interval RRT-Connect) for a single robot with moving obstacles.
+//
+// References:
+//  - Paper: Kerimov et al., "Safe Interval Randomized Path Planning For
+//    Manipulators" (arXiv:2412.19567).
+//  - Reference implementation: PathPlanning/ManipulationPlanning-SI-RRT
+//    (MSIRRT/src/PlannerConnect.cpp).
+//
+// High-level idea (paper Alg.1):
+//  - Grow two trees in configuration space:
+//      T_start: rooted at q_start, times go forward (earliest-arrival semantics).
+//      T_goal : rooted at q_goal,  times go backward (latest-departure semantics).
+//  - Each node is (q, si=[t_low,t_high]) where si is a SAFE INTERVAL:
+//      robot fixed at configuration q is collision-free w.r.t. moving obstacles
+//      for all t in [t_low,t_high].
+//  - Connecting edges use "wait-and-go":
+//      wait at parent until a departure time that makes the motion safe, then
+//      move at constant speed (vMax_) along the straight-line interpolation.
+//
+// Mapping to the reference repo / paper:
+//  - extendTowards()      ~= extend() in PlannerConnect.cpp
+//  - findSafeIntervals()  ~= collision_manager.get_safe_intervals(...)
+//  - growTree()           ~= set_parent(...) / "setParent" in the paper
+//  - tryConnectOtherTree()~= connect_trees(...) / connect(T_other, q_new, ...)
+//  - buildSolutionFromConnection()
+//      ~= uniteTrees() + "trim wait at q_new" (paper Fig.2),
+//         implemented similarly to prune_goal_tree() in PlannerConnect.cpp by
+//         copying the goal-branch onto the start tree while trimming the wait.
+//
+// Notes on *time representation* here:
+//  - We discretize time on a fixed grid with step col_dt_ (seconds).
+//  - Internally we do all interval overlap arithmetic on integer timesteps
+//    (like the reference implementation operates on integer frames).
+// -----------------------------------------------------------------------------
+
+namespace
+{
+constexpr double kTimeEps = 1e-9;
+
+struct ParentCandidate
+{
+    VertexPtr v;
+    int travel_steps{0};
+    int sort_key{0};
+    bool static_checked{false};
+    bool static_ok{false};
+};
+} // namespace
 
 SIPP_RRT::SIPP_RRT(std::shared_ptr<PlanInstance> instance, int robot_id)
-    : SingleAgentPlanner(instance, robot_id) {
-        vMax_ = instance_->getVMax(robot_id);
+    : SingleAgentPlanner(std::move(instance), robot_id)
+{
+    vMax_ = instance_->getVMax(robot_id);
+}
+
+int SIPP_RRT::timeToStep(double t) const
+{
+    return static_cast<int>(std::llround(t / col_dt_));
+}
+
+double SIPP_RRT::stepToTime(int step) const
+{
+    return static_cast<double>(step) * col_dt_;
+}
+
+int SIPP_RRT::ceilDivSteps(double t) const
+{
+    return static_cast<int>(std::ceil(t / col_dt_ - 1e-12));
+}
+
+double SIPP_RRT::nearestDistance(const RobotPose &sample, VertexPtr &nearest_vertex, const Tree &tree) const
+{
+    assert(!tree.vertices.empty());
+
+    const bool allow_kdtree =
+        start_nn_.available() && nn_dims_ > 0 && tree.vertices.size() >= mr_planner::planning::kLinearScanThreshold;
+    if (allow_kdtree)
+    {
+        const mr_planner::planning::PoseKDTreeIndex<VertexPtr> *index = nullptr;
+        if (&tree == &start_tree_)
+        {
+            index = &start_nn_;
+        }
+        else if (&tree == &goal_tree_)
+        {
+            index = &goal_nn_;
+        }
+
+        if (index != nullptr)
+        {
+            if (nn_query_.size() != nn_dims_)
+            {
+                nn_query_.assign(nn_dims_, 0.0F);
+            }
+            mr_planner::planning::pack_joints_l1(sample, nn_query_.data(), nn_dims_);
+            VertexPtr out;
+            float dist_f = 0.0F;
+            if (index->nearest(nn_query_.data(), &out, &dist_f) && out)
+            {
+                nearest_vertex = out;
+                return static_cast<double>(dist_f);
+            }
+        }
     }
 
-bool SIPP_RRT::findSafeIntervals(const RobotPose &pose, std::vector<SafeInterval> &safe_interval) {
+    double best = std::numeric_limits<double>::infinity();
+    nearest_vertex = nullptr;
+    for (const auto &v : tree.vertices)
+    {
+        const double d = instance_->computeDistance(v->pose, sample);
+        if (d < best)
+        {
+            best = d;
+            nearest_vertex = v;
+        }
+    }
+    return best;
+}
+
+void SIPP_RRT::addRootIndexed(Tree &tree, const VertexPtr &vertex)
+{
+    tree.addRoot(vertex);
+    if (!start_nn_.available() || nn_dims_ == 0 || !vertex)
+    {
+        return;
+    }
+    if (nn_query_.size() != nn_dims_)
+    {
+        nn_query_.assign(nn_dims_, 0.0F);
+    }
+    mr_planner::planning::pack_joints_l1(vertex->pose, nn_query_.data(), nn_dims_);
+    if (&tree == &start_tree_)
+    {
+        start_nn_.insert(nn_query_.data(), vertex);
+    }
+    else if (&tree == &goal_tree_)
+    {
+        goal_nn_.insert(nn_query_.data(), vertex);
+    }
+}
+
+void SIPP_RRT::addVertexIndexed(Tree &tree, const VertexPtr &vertex)
+{
+    tree.addVertex(vertex);
+    if (!start_nn_.available() || nn_dims_ == 0 || !vertex)
+    {
+        return;
+    }
+    if (nn_query_.size() != nn_dims_)
+    {
+        nn_query_.assign(nn_dims_, 0.0F);
+    }
+    mr_planner::planning::pack_joints_l1(vertex->pose, nn_query_.data(), nn_dims_);
+    if (&tree == &start_tree_)
+    {
+        start_nn_.insert(nn_query_.data(), vertex);
+    }
+    else if (&tree == &goal_tree_)
+    {
+        goal_nn_.insert(nn_query_.data(), vertex);
+    }
+}
+
+GrowState SIPP_RRT::extendTowards(const RobotPose &target, Tree &tree, RobotPose &out_pose) const
+{
+    // RRT-Connect "extend" (space-only): pick nearest vertex, then either:
+    //  - directly connect if within max_delta_, or
+    //  - steer by max_delta_ towards the target.
+    // Time/safe-interval logic is handled separately in growTree().
+    if (tree.vertices.empty())
+    {
+        return TRAPPED;
+    }
+
+    VertexPtr nearest_v;
+    const double dist = nearestDistance(target, nearest_v, tree);
+    if (!nearest_v)
+    {
+        return TRAPPED;
+    }
+
+    if (dist <= max_delta_)
+    {
+        if (dist < 1e-9)
+        {
+            out_pose = target;
+            return REACHED;
+        }
+        if (instance_->connect(nearest_v->pose, target))
+        {
+            out_pose = target;
+            return REACHED;
+        }
+        return TRAPPED;
+    }
+
+    RobotPose steered = instance_->initRobotPose(robot_id_);
+    if (instance_->steer(nearest_v->pose, target, max_delta_, steered))
+    {
+        out_pose = std::move(steered);
+        return ADVANCED;
+    }
+    return TRAPPED;
+}
+
+bool SIPP_RRT::sample(RobotPose &new_pose)
+{
+    // Configuration-space sampling. Note: we rely on PlanInstance::sample()
+    // to respect joint limits (and potentially pre-check collisions).
+    new_pose = instance_->initRobotPose(robot_id_);
+    int tries = 0;
+    constexpr int kMaxTries = 10;
+    while (tries++ < kMaxTries)
+    {
+        if (instance_->sample(new_pose))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SIPP_RRT::precompute_obs_pose()
+{
+    // Precompute moving obstacle poses on the same discretized timestep grid.
+    // For t beyond the provided trajectory, we assume the obstacle stays put
+    // at its last configuration (matches the older codebase behavior).
+    moving_obs_span_ = 0.0;
+    for (const auto &obs : obstacles_)
+    {
+        if (!obs.times.empty())
+        {
+            moving_obs_span_ = std::max(moving_obs_span_, obs.times.back());
+        }
+    }
+
+    moving_obs_steps_ = std::max(0, static_cast<int>(std::ceil(moving_obs_span_ / col_dt_ - 1e-12)) + 1);
+
+    obs_poses_.clear();
+    obs_poses_.reserve(obstacles_.size());
+    for (const RobotTrajectory &obs : obstacles_)
+    {
+        std::vector<RobotPose> poses;
+        poses.reserve(static_cast<std::size_t>(moving_obs_steps_));
+
+        int ind = 0;
+        for (int s = 0; s < moving_obs_steps_; ++s)
+        {
+            const double t = stepToTime(s);
+            while (ind + 1 < static_cast<int>(obs.times.size()) && obs.times[static_cast<std::size_t>(ind + 1)] <= t)
+            {
+                ind++;
+            }
+
+            if (obs.times.empty())
+            {
+                poses.push_back(instance_->initRobotPose(obs.robot_id));
+                continue;
+            }
+
+            if (ind + 1 >= static_cast<int>(obs.times.size()))
+            {
+                poses.push_back(obs.trajectory[static_cast<std::size_t>(ind)]);
+                continue;
+            }
+
+            const double t0 = obs.times[static_cast<std::size_t>(ind)];
+            const double t1 = obs.times[static_cast<std::size_t>(ind + 1)];
+            const double alpha = (t - t0) / (t1 - t0);
+            poses.push_back(instance_->interpolate(obs.trajectory[static_cast<std::size_t>(ind)],
+                                                  obs.trajectory[static_cast<std::size_t>(ind + 1)],
+                                                  alpha));
+        }
+        obs_poses_.push_back(std::move(poses));
+    }
+}
+
+bool SIPP_RRT::findSafeIntervals(const RobotPose &pose, std::vector<SafeInterval> &safe_interval)
+{
+    // Compute safe intervals [t_low, t_high] for a fixed configuration `pose`,
+    // i.e., all timesteps where pose does NOT collide with any moving obstacle.
+    //
+    // This corresponds to getSafeIntervals() in the paper / reference repo,
+    // but implemented with explicit per-timestep collision checks.
+    //
+    // Important: We first check collision against the *static* environment.
+    // If pose is statically invalid, it has no safe intervals at all.
     safe_interval.clear();
 
-    double si_start = -1;
+    if (t_max_steps_ <= 0)
+    {
+        log("SIPP_RRT: t_max_steps_ not initialized", LogLevel::ERROR);
+        return false;
+    }
 
-    double t = 0.0;
-    int ind = 0;
-    while (t <= moving_obs_span_) {
-        bool has_collision = false;
-        for (int i = 0; i < obs_poses_.size(); i++) {
-            if (instance_->checkCollision({pose, obs_poses_[i][ind]}, true) == true) {
-                has_collision = true;
+    if (instance_->checkCollision({pose}, false))
+    {
+        return false;
+    }
+
+    int start_step = -1;
+    for (int s = 0; s <= t_max_steps_; ++s)
+    {
+        bool coll = false;
+        for (std::size_t i = 0; i < obs_poses_.size(); ++i)
+        {
+            const int idx = (moving_obs_steps_ > 0) ? std::min(s, moving_obs_steps_ - 1) : 0;
+            if (instance_->checkCollision({pose, obs_poses_[i][static_cast<std::size_t>(idx)]}, true))
+            {
+                coll = true;
                 break;
             }
         }
 
-        if (has_collision) {
-            if (si_start >= 0 && si_start < (t-col_dt_)) {
-                // add a safe interval if there is a collision-free interval
+        if (coll)
+        {
+            if (start_step >= 0 && start_step <= s - 1)
+            {
                 SafeInterval si;
                 si.pose = pose;
-                si.t_start = si_start;
-                si.t_end = t - col_dt_;
-                safe_interval.push_back(si);
+                si.t_start = stepToTime(start_step);
+                si.t_end = stepToTime(s - 1);
+                safe_interval.push_back(std::move(si));
             }
-            si_start = -1;
+            start_step = -1;
         }
-        else {
-            if (si_start == -1) {
-                si_start = t;
+        else
+        {
+            if (start_step < 0)
+            {
+                start_step = s;
             }
         }
-
-        t += col_dt_;
-        ind ++;
     }
 
-    if (si_start >= 0) {
+    if (start_step >= 0 && start_step <= t_max_steps_)
+    {
         SafeInterval si;
         si.pose = pose;
-        si.t_start = si_start;
-        si.t_end = 1000000;
-        safe_interval.push_back(si);
+        si.t_start = stepToTime(start_step);
+        si.t_end = stepToTime(t_max_steps_);
+        safe_interval.push_back(std::move(si));
+    }
+
+    return !safe_interval.empty();
+}
+
+bool SIPP_RRT::validateMotion(const RobotPose &pose_1, const RobotPose &pose_2, int t1_step, int t2_step) const
+{
+    // Dynamic collision checking for a "wait-and-go" edge:
+    // - Assume the robot is at pose_1 at t1_step and at pose_2 at t2_step,
+    //   moving with constant speed along PlanInstance::interpolate().
+    // - Check collision against every moving obstacle at each discretized step.
+    //
+    // This is the analog of is_collision_motion(...) in the reference repo.
+    if (t2_step < t1_step)
+    {
+        return false;
+    }
+    const int dt_steps = t2_step - t1_step;
+    if (dt_steps == 0)
+    {
+        for (std::size_t i = 0; i < obs_poses_.size(); ++i)
+        {
+            const int idx = (moving_obs_steps_ > 0) ? std::min(t1_step, moving_obs_steps_ - 1) : 0;
+            if (instance_->checkCollision({pose_1, obs_poses_[i][static_cast<std::size_t>(idx)]}, true))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    for (int s = 0; s <= dt_steps; ++s)
+    {
+        const double alpha = static_cast<double>(s) / static_cast<double>(dt_steps);
+        const RobotPose a_pose = instance_->interpolate(pose_1, pose_2, alpha);
+        const int t_step = t1_step + s;
+        const int idx = (moving_obs_steps_ > 0) ? std::min(t_step, moving_obs_steps_ - 1) : 0;
+        for (std::size_t i = 0; i < obs_poses_.size(); ++i)
+        {
+            if (instance_->checkCollision({a_pose, obs_poses_[i][static_cast<std::size_t>(idx)]}, true))
+            {
+                return false;
+            }
+        }
     }
     return true;
 }
 
+std::vector<VertexPtr> SIPP_RRT::growTree(const RobotPose &pose,
+                                          const std::vector<SafeInterval> &safe_intervals,
+                                          Tree &tree,
+                                          bool is_goal_tree)
+{
+    // Given a new configuration `pose` and its safe intervals, create one node
+    // per safe interval that can be connected from the existing tree using
+    // wait-and-go edges (paper Alg.1, setParent()).
+    //
+    // The two trees differ in semantics:
+    //  - Start tree (is_goal_tree=false): pick the EARLIEST arrival time in si.
+    //  - Goal  tree (is_goal_tree=true ): pick the LATEST departure time in si.
+    //
+    // Implementation detail:
+    //  - Each Vertex stores:
+    //      time       := "main" time at this node (arrival for start tree,
+    //                    latest departure for goal tree).
+    //      other_time := time at the parent end of the edge (departure for start
+    //                    tree, parent-arrival for goal tree).
+    //
+    // This is crucial: edge timing is stored on the CHILD vertex, never by
+    // mutating the parent. The previous implementation mutated parents, which
+    // becomes incorrect when a node has multiple children.
+    std::vector<VertexPtr> added;
+    if (safe_intervals.empty())
+    {
+        return added;
+    }
 
-bool SIPP_RRT::init(const PlannerOptions &options) { 
-    // initialize two trees, one for the start and one for the goal
+    // Gather parent candidates within a radius.
+    std::vector<ParentCandidate> candidates;
+    candidates.reserve(tree.vertices.size());
+    for (const auto &v : tree.vertices)
+    {
+        const double dist = instance_->computeDistance(v->pose, pose);
+        if (dist > parent_radius_)
+        {
+            continue;
+        }
+        const double travel_t = dist / vMax_;
+        const int travel_steps = std::max(0, static_cast<int>(std::ceil(travel_t / col_dt_ - 1e-12)));
+        const int v_time = timeToStep(v->time);
+        ParentCandidate cand;
+        cand.v = v;
+        cand.travel_steps = travel_steps;
+        cand.sort_key = is_goal_tree ? (v_time - travel_steps) : (v_time + travel_steps);
+        candidates.push_back(std::move(cand));
+    }
+
+    if (candidates.empty())
+    {
+        // Always allow at least the nearest node as a parent candidate.
+        VertexPtr nearest_v;
+        const double dist = nearestDistance(pose, nearest_v, tree);
+        if (nearest_v)
+        {
+            const double travel_t = dist / vMax_;
+            const int travel_steps = std::max(0, static_cast<int>(std::ceil(travel_t / col_dt_ - 1e-12)));
+            const int v_time = timeToStep(nearest_v->time);
+            ParentCandidate cand;
+            cand.v = nearest_v;
+            cand.travel_steps = travel_steps;
+            cand.sort_key = is_goal_tree ? (v_time - travel_steps) : (v_time + travel_steps);
+            candidates.push_back(std::move(cand));
+        }
+    }
+
+    if (candidates.empty())
+    {
+        return added;
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [is_goal_tree](const ParentCandidate &a, const ParentCandidate &b) {
+        if (is_goal_tree)
+        {
+            return a.sort_key > b.sort_key; // latest first
+        }
+        return a.sort_key < b.sort_key; // earliest first
+    });
+
+    const auto safeIntervalToSteps = [&](const SafeInterval &si) -> std::pair<int, int> {
+        return {timeToStep(si.t_start), timeToStep(si.t_end)};
+    };
+
+    const auto alreadyHasInterval = [&](const SafeInterval &si) -> bool {
+        const auto it = tree.vertex_map.find(pose);
+        if (it == tree.vertex_map.end())
+        {
+            return false;
+        }
+        const auto [t0, t1] = safeIntervalToSteps(si);
+        for (const auto &v : it->second)
+        {
+            const auto [u0, u1] = safeIntervalToSteps(v->si);
+            if (t0 == u0 && t1 == u1)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const auto &si : safe_intervals)
+    {
+        if (alreadyHasInterval(si))
+        {
+            continue;
+        }
+
+        const auto [si_start, si_end] = safeIntervalToSteps(si);
+
+        for (auto &cand : candidates)
+        {
+            if (cand.travel_steps == 0)
+            {
+                continue;
+            }
+
+            if (!cand.static_checked)
+            {
+                cand.static_ok = instance_->connect(cand.v->pose, pose);
+                cand.static_checked = true;
+            }
+            if (!cand.static_ok)
+            {
+                continue;
+            }
+
+            const auto [p_start, p_end] = safeIntervalToSteps(cand.v->si);
+            const int p_time = timeToStep(cand.v->time);
+
+            if (!is_goal_tree)
+            {
+                // Start tree: choose earliest feasible departure time.
+                int dep_lb = std::max({p_time, p_start, si_start - cand.travel_steps, 0});
+                int dep_ub = std::min(p_end, si_end - cand.travel_steps);
+                if (dep_lb > dep_ub)
+                {
+                    continue;
+                }
+                for (int dep = dep_lb; dep <= dep_ub; ++dep)
+                {
+                    const int arr = dep + cand.travel_steps;
+                    if (arr < si_start || arr > si_end)
+                    {
+                        continue;
+                    }
+                    if (!validateMotion(cand.v->pose, pose, dep, arr))
+                    {
+                        continue;
+                    }
+
+                    auto v = std::make_shared<Vertex>(pose);
+                    v->setSafeInterval(si);
+                    v->addParent(cand.v);
+                    v->setOtherTime(stepToTime(dep));
+                    v->setTime(stepToTime(arr));
+                    addVertexIndexed(tree, v);
+                    totalTreeSize++;
+                    added.push_back(std::move(v));
+                    break; // one parent per safe interval
+                }
+            }
+            else
+            {
+                // Goal tree: choose latest feasible departure time from `pose` to reach the parent.
+                int parent_arr_lb = std::max({p_start, si_start + cand.travel_steps});
+                int parent_arr_ub = std::min({p_end, si_end + cand.travel_steps, p_time});
+                if (parent_arr_lb > parent_arr_ub)
+                {
+                    continue;
+                }
+                for (int parent_arr = parent_arr_ub; parent_arr >= parent_arr_lb; --parent_arr)
+                {
+                    const int dep = parent_arr - cand.travel_steps;
+                    if (dep < si_start || dep > si_end)
+                    {
+                        continue;
+                    }
+                    if (!validateMotion(pose, cand.v->pose, dep, parent_arr))
+                    {
+                        continue;
+                    }
+
+                    auto v = std::make_shared<Vertex>(pose);
+                    v->setSafeInterval(si);
+                    v->addParent(cand.v);
+                    v->setTime(stepToTime(dep));       // time at this node (latest departure)
+                    v->setOtherTime(stepToTime(parent_arr)); // time at parent along this edge
+                    addVertexIndexed(tree, v);
+                    totalTreeSize++;
+                    added.push_back(std::move(v));
+                    break; // one parent per safe interval
+                }
+            }
+        }
+    }
+
+    return added;
+}
+
+void SIPP_RRT::swap_trees()
+{
+    current_tree_ = (current_tree_ == &start_tree_) ? &goal_tree_ : &start_tree_;
+    other_tree_ = (other_tree_ == &start_tree_) ? &goal_tree_ : &start_tree_;
+    current_is_goal_tree_ = !current_is_goal_tree_;
+}
+
+bool SIPP_RRT::tryConnectOtherTree(const RobotPose &target_pose,
+                                  const PlannerOptions &options,
+                                  bool current_is_goal_tree,
+                                  VertexPtr &out_start_node,
+                                  VertexPtr &out_goal_node)
+{
+    // RRT-Connect "connect" step (paper Alg.1, connect()):
+    // greedily extend the OTHER tree towards target_pose until either:
+    //  - trapped (static collision / steering failure), or
+    //  - reached (space), then check if both trees contain a node at the SAME
+    //    configuration + SAME safe interval with time consistency.
+    //
+    // Connection condition:
+    //  - both trees have a node (q_new, same_si)
+    //  - and start_arrival_time <= goal_departure_time
+    //
+    // If satisfied, we return the pair of junction vertices.
+    auto verticesAtPose = [](const Tree &tree, const RobotPose &pose) -> const std::vector<VertexPtr> * {
+        const auto it = tree.vertex_map.find(pose);
+        if (it == tree.vertex_map.end())
+        {
+            return nullptr;
+        }
+        return &it->second;
+    };
+
+    while (!terminate(options))
+    {
+        RobotPose next_pose;
+        const GrowState gs = extendTowards(target_pose, *other_tree_, next_pose);
+        if (gs == TRAPPED)
+        {
+            return false;
+        }
+
+        std::vector<SafeInterval> sis;
+        if (!findSafeIntervals(next_pose, sis) || sis.empty())
+        {
+            return false;
+        }
+
+        const auto new_nodes = growTree(next_pose, sis, *other_tree_, !current_is_goal_tree);
+        if (new_nodes.empty())
+        {
+            return false;
+        }
+
+        if (gs != REACHED)
+        {
+            continue;
+        }
+
+        const auto *current_nodes = verticesAtPose(*current_tree_, target_pose);
+        const auto *other_nodes = verticesAtPose(*other_tree_, target_pose);
+        if (!current_nodes || !other_nodes)
+        {
+            return false;
+        }
+
+        auto sameInterval = [&](const SafeInterval &a, const SafeInterval &b) -> bool {
+            return timeToStep(a.t_start) == timeToStep(b.t_start) && timeToStep(a.t_end) == timeToStep(b.t_end);
+        };
+
+        if (!current_is_goal_tree)
+        {
+            // Current is start tree; other is goal tree.
+            for (const auto &s_node : *current_nodes)
+            {
+                for (const auto &g_node : *other_nodes)
+                {
+                    if (!sameInterval(s_node->si, g_node->si))
+                    {
+                        continue;
+                    }
+                    if (s_node->time <= g_node->time + kTimeEps)
+                    {
+                        out_start_node = s_node;
+                        out_goal_node = g_node;
+                        return true;
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Current is goal tree; other is start tree.
+            for (const auto &g_node : *current_nodes)
+            {
+                for (const auto &s_node : *other_nodes)
+                {
+                    if (!sameInterval(s_node->si, g_node->si))
+                    {
+                        continue;
+                    }
+                    if (s_node->time <= g_node->time + kTimeEps)
+                    {
+                        out_start_node = s_node;
+                        out_goal_node = g_node;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
+bool SIPP_RRT::buildSolutionFromConnection(const VertexPtr &start_node, const VertexPtr &goal_node)
+{
+    // Unite the two trees once they meet at q_new (paper Alg.1, uniteTrees()).
+    //
+    // The paper notes (Fig.2) that the naive concatenation typically produces a
+    // long wait at the junction, because:
+    //  - start-branch tries to reach q_new as early as possible, while
+    //  - goal-branch tries to leave q_new as late as possible.
+    //
+    // We therefore "trim" the wait at q_new by copying the goal-branch onto the
+    // start tree while choosing the earliest feasible departure times that still
+    // keep the remainder of the (goal) branch feasible. This mirrors the idea of
+    // prune_goal_tree() in the reference implementation.
+    if (!start_node || !goal_node)
+    {
+        return false;
+    }
+    if (!(start_node->pose == goal_node->pose))
+    {
+        return false;
+    }
+
+    // Copy the goal-tree branch onto the start tree while trimming waiting at the junction (like the SI-RRT paper).
+    VertexPtr current = start_node;
+    VertexPtr goal_child = goal_node;
+    VertexPtr goal_parent = goal_child->parent;
+
+    while (goal_parent)
+    {
+        const double dist = instance_->computeDistance(current->pose, goal_parent->pose);
+        const int travel_steps = std::max(0, static_cast<int>(std::ceil((dist / vMax_) / col_dt_ - 1e-12)));
+
+        const int deadline = timeToStep(goal_child->time);
+        const int cur_time = timeToStep(current->time);
+        const int cur_end = timeToStep(current->si.t_end);
+        const int goal_si_start = timeToStep(goal_parent->si.t_start);
+        const int goal_si_end = timeToStep(goal_parent->si.t_end);
+
+        int dep_lb = std::max({cur_time, goal_si_start - travel_steps, 0});
+        int dep_ub = std::min({deadline, cur_end, goal_si_end - travel_steps});
+
+        bool found = false;
+        if (dep_lb <= dep_ub)
+        {
+            for (int dep = dep_lb; dep <= dep_ub; ++dep)
+            {
+                const int arr = dep + travel_steps;
+                if (arr < goal_si_start || arr > goal_si_end)
+                {
+                    continue;
+                }
+                if (!validateMotion(current->pose, goal_parent->pose, dep, arr))
+                {
+                    continue;
+                }
+
+                auto v = std::make_shared<Vertex>(goal_parent->pose);
+                v->setSafeInterval(goal_parent->si);
+                v->addParent(current);
+                v->setOtherTime(stepToTime(dep));
+                v->setTime(stepToTime(arr));
+                addVertexIndexed(start_tree_, v);
+                totalTreeSize++;
+                current = v;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            const int dep = timeToStep(goal_child->time);
+            const int arr = timeToStep(goal_child->other_time);
+            auto v = std::make_shared<Vertex>(goal_parent->pose);
+            v->setSafeInterval(goal_parent->si);
+            v->addParent(current);
+            v->setOtherTime(stepToTime(dep));
+            v->setTime(stepToTime(arr));
+            addVertexIndexed(start_tree_, v);
+            totalTreeSize++;
+            current = v;
+        }
+
+        goal_child = goal_parent;
+        goal_parent = goal_parent->parent;
+    }
+
+    const VertexPtr finish = current;
+    if (!finish)
+    {
+        return false;
+    }
+
+    // Build a piecewise "wait-then-go" trajectory from the start-tree chain.
+    std::vector<VertexPtr> chain;
+    for (VertexPtr v = finish; v != nullptr; v = v->parent)
+    {
+        chain.push_back(v);
+    }
+    std::reverse(chain.begin(), chain.end());
+    if (chain.empty())
+    {
+        return false;
+    }
+
+    RobotTrajectory traj;
+    traj.robot_id = robot_id_;
+    traj.times.clear();
+    traj.trajectory.clear();
+
+    traj.times.push_back(chain.front()->time);
+    traj.trajectory.push_back(chain.front()->pose);
+
+    for (std::size_t i = 1; i < chain.size(); ++i)
+    {
+        const auto &prev = chain[i - 1];
+        const auto &cur = chain[i];
+        const double depart_t = cur->other_time;
+        if (depart_t > prev->time + 1e-9)
+        {
+            traj.times.push_back(depart_t);
+            traj.trajectory.push_back(prev->pose);
+        }
+        traj.times.push_back(cur->time);
+        traj.trajectory.push_back(cur->pose);
+    }
+
+    traj.cost = traj.times.back();
+    traj.num_nodes_expanded = static_cast<int>(start_tree_.vertices.size() + goal_tree_.vertices.size());
+
+    if (traj.cost + 1e-9 < best_cost_)
+    {
+        best_cost_ = traj.cost;
+        solution_ = std::move(traj);
+    }
+
+    return true;
+}
+
+bool SIPP_RRT::init(const PlannerOptions &options)
+{
+    // Initialize SI-RRT:
+    //  1) validate static start/goal,
+    //  2) precompute moving obstacle poses on the timestep grid,
+    //  3) compute safe intervals for start/goal configurations,
+    //  4) create roots for the two trees.
+    //
+    // We plan up to a finite horizon t_max_ (paper uses t_max=20s in eval).
+    // Here we set:
+    //   t_max_ = moving_obs_span_ + max(2*direct_travel, 5s)
+    // which is typically enough to allow "wait for others to pass" while
+    // remaining finite for safe-interval computation.
+    no_plan_needed_ = false;
+    best_cost_ = std::numeric_limits<double>::infinity();
+    solution_ = RobotTrajectory();
+    numIterations_ = 0;
+    numValidSamples_ = 0;
+    totalTreeSize = 0;
+
+    start_tree_ = Tree();
+    goal_tree_ = Tree();
+    current_tree_ = &start_tree_;
+    other_tree_ = &goal_tree_;
+    current_is_goal_tree_ = false;
+
     start_pose_ = instance_->getStartPose(robot_id_);
     goal_pose_ = instance_->getGoalPose(robot_id_);
 
-    // check if goal pose is collision free with the static environment
-    if (instance_->checkCollision({goal_pose_}, false) == true) {
-        log("Goal pose is in collision", LogLevel::ERROR);
-        instance_->checkCollision({goal_pose_}, false, true); // print debug info about contact
+    if (instance_->checkCollision({start_pose_}, false))
+    {
+        log("SIPP_RRT: Start pose is in collision (static)", LogLevel::ERROR);
+        instance_->checkCollision({start_pose_}, false, true);
         return false;
     }
-    // check if the start pose is collision free with the static environment
-    if (instance_->checkCollision({start_pose_}, false) == true) {
-        log("Start pose is in collision", LogLevel::ERROR);
-        instance_->checkCollision({start_pose_}, false, true); // print debug info about contact
+    if (instance_->checkCollision({goal_pose_}, false))
+    {
+        log("SIPP_RRT: Goal pose is in collision (static)", LogLevel::ERROR);
+        instance_->checkCollision({goal_pose_}, false, true);
         return false;
     }
 
-    // precompute obstacle poses at discretized time steps
+    nn_dims_ = start_pose_.joint_values.size();
+    nn_query_.assign(nn_dims_, 0.0F);
+    start_nn_.reset(nn_dims_);
+    goal_nn_.reset(nn_dims_);
+
     obstacles_ = options.obstacles;
     precompute_obs_pose();
-    
-    // find safe intervals for start and goal poses
-    std::vector<SafeInterval> start_si;
-    if (!findSafeIntervals(start_pose_, start_si)) {
-        log("No safe intervals found for start pose", LogLevel::ERROR);
+
+    const double direct_travel = instance_->computeDistance(start_pose_, goal_pose_) / vMax_;
+    min_time_ = direct_travel;
+
+    // Choose a finite planning horizon (t_max) similar to the SI-RRT paper.
+    t_max_ = std::max(moving_obs_span_, 0.0) + std::max(2.0 * direct_travel, 5.0);
+    t_max_ = std::max(t_max_, direct_travel);
+    t_max_steps_ = std::max(1, ceilDivSteps(t_max_));
+    t_max_ = stepToTime(t_max_steps_);
+
+    std::vector<SafeInterval> start_sis;
+    if (!findSafeIntervals(start_pose_, start_sis))
+    {
+        log("SIPP_RRT: No safe intervals at start pose", LogLevel::ERROR);
         return false;
     }
 
-    std::vector<SafeInterval> goal_si;
-    if (!findSafeIntervals(goal_pose_, goal_si)) {
-        log("No safe intervals found for goal pose", LogLevel::ERROR);
-        return false;
-    }
-    
-    min_time_ = instance_->computeDistance(start_pose_, goal_pose_) / vMax_;
-    // find the last time when obstacles pass thru the goal poses
-    for (const RobotTrajectory &obs : obstacles_) {
-        double last_time = obs.times.back();
-        int num_points = last_time / col_dt_ + 1;
-        int ind = 0;
-        RobotPose obs_i_pose;
-        for (int i = 0; i < num_points; i++) {  
-            double t = i * col_dt_;
-            while (ind + 1 < obs.times.size() && obs.times[ind + 1] <= t) {
-                ind++;
-            }
-            if (ind + 1 == obs.times.size()) {
-                // assuming obstacle stays at the end of the trajectory
-                obs_i_pose = obs.trajectory[ind];
-            } else {
-                double alpha = (t - obs.times[ind]) / (obs.times[ind + 1] - obs.times[ind]);
-                obs_i_pose = instance_->interpolate(obs.trajectory[ind], obs.trajectory[ind + 1], alpha);
-            }
-            if (instance_->checkCollision({goal_pose_, obs_i_pose}, true) == true) {
-                // has collision
-                min_time_ = std::max(min_time_, t + col_dt_);
-            }
+    SafeInterval start_si{};
+    bool found_start = false;
+    for (const auto &si : start_sis)
+    {
+        if (si.t_start <= 0.0 + kTimeEps && si.t_end >= 0.0 - kTimeEps)
+        {
+            start_si = si;
+            found_start = true;
+            break;
         }
     }
-
-    if (min_time_ < 1e-6) {
-        log("No need to plan for static agent", LogLevel::INFO);
+    if (!found_start)
+    {
+        log("SIPP_RRT: Start pose is not safe at t=0", LogLevel::ERROR);
         return false;
     }
-    log("Minimum time: " + std::to_string(min_time_), LogLevel::DEBUG);
 
-    // initialize the root nodes in the trees
-
-    auto startVertex = std::make_shared<Vertex>(start_pose_);
-    startVertex->setTime(0.0);
-    startVertex->setSafeInterval(start_si[0]);
-    start_tree_.addRoot(startVertex);
+    auto start_v = std::make_shared<Vertex>(start_pose_);
+    start_v->setSafeInterval(start_si);
+    start_v->setTime(0.0);
+    start_v->setOtherTime(0.0);
+    addRootIndexed(start_tree_, start_v);
     totalTreeSize++;
 
-    for (int i = 0; i < goal_si.size(); i++) {
-        if (goal_si[i].t_end < min_time_) {
-            continue;
+    std::vector<SafeInterval> goal_sis;
+    if (!findSafeIntervals(goal_pose_, goal_sis))
+    {
+        log("SIPP_RRT: No safe intervals at goal pose", LogLevel::ERROR);
+        return false;
+    }
+
+    bool found_goal_root = false;
+    for (const auto &si : goal_sis)
+    {
+        // We must be able to stay at the goal through t_max_ (the other robots finish moving by then).
+        if (si.t_start - kTimeEps <= t_max_ && si.t_end + kTimeEps >= t_max_)
+        {
+            auto goal_v = std::make_shared<Vertex>(goal_pose_);
+            goal_v->setSafeInterval(si);
+            goal_v->setTime(t_max_);
+            addRootIndexed(goal_tree_, goal_v);
+            totalTreeSize++;
+            found_goal_root = true;
         }
-        if (goal_si[i].t_start < min_time_) {
-            goal_si[i].t_start = min_time_;
-        }
-        // add vertex to the goal tree
-        auto goalVertex = std::make_shared<Vertex>(goal_pose_);
-        goalVertex->setOtherTime(goal_si[i].t_end);
-        goalVertex->setSafeInterval(goal_si[i]);
-        goal_tree_.addRoot(goalVertex);
-        totalTreeSize++;
+    }
+    if (!found_goal_root)
+    {
+        log("SIPP_RRT: Goal pose is not safe at t_max", LogLevel::ERROR);
+        return false;
+    }
+
+    // If start==goal, consider the trivial solution.
+    if (instance_->computeDistance(start_pose_, goal_pose_) < 1e-9)
+    {
+        no_plan_needed_ = true;
     }
 
     return true;
 }
- 
-bool SIPP_RRT::plan(const PlannerOptions &options) {
 
+bool SIPP_RRT::plan(const PlannerOptions &options)
+{
+    // Main SI-RRT loop (paper Alg.1):
+    //  - optionally try a direct wait-and-go connection start->goal,
+    //  - then iteratively:
+    //      sample q, extend current tree in space, compute safe intervals,
+    //      attach intervals via growTree(), connect the other tree, swap trees.
     start_time_ = std::chrono::high_resolution_clock::now();
 
-    if (!init(options)) {
-        best_cost_ = 0.0;
+    if (!init(options))
+    {
+        return false;
+    }
+
+    if (no_plan_needed_)
+    {
         solution_.robot_id = robot_id_;
-        solution_.times.clear();
-        solution_.trajectory.clear();
-        solution_.times.push_back(0.0);
-        solution_.trajectory.push_back(goal_pose_);
+        solution_.times = {0.0};
+        solution_.trajectory = {start_pose_};
         solution_.cost = 0.0;
-        log("Plan is just the start/goal pose", LogLevel::INFO);
+        best_cost_ = 0.0;
         return true;
     }
 
-   
-    VertexPtr goalVertex = goal_tree_.roots[0]; 
+    // Fast path: try a direct wait-and-go edge from start to goal.
+    if (options.interpolate_first_)
+    {
+        if (instance_->connect(start_pose_, goal_pose_))
+        {
+            const VertexPtr start_root = start_tree_.roots.empty() ? nullptr : start_tree_.roots[0];
+            if (start_root && !goal_tree_.roots.empty())
+            {
+                const auto &goal_si = goal_tree_.roots[0]->si;
+                const int travel_steps =
+                    std::max(0, static_cast<int>(std::ceil((instance_->computeDistance(start_pose_, goal_pose_) / vMax_) / col_dt_ - 1e-12)));
+                const int start_end = timeToStep(start_root->si.t_end);
+                const int goal_start = timeToStep(goal_si.t_start);
+                const int goal_end = timeToStep(goal_si.t_end);
 
-    // try to connect start and goal in minimum time
-    RobotTrajectory interpolate_traj;
-    if (interpolate(start_pose_, goal_pose_, interpolate_traj)) {
-        log("Connected start and goal in minimum time", LogLevel::INFO);
-        solution_ = interpolate_traj;
-        best_cost_ = solution_.cost;
+                int dep_lb = std::max(0, goal_start - travel_steps);
+                int dep_ub = std::min(start_end, goal_end - travel_steps);
+                for (int dep = dep_lb; dep <= dep_ub; ++dep)
+                {
+                    const int arr = dep + travel_steps;
+                    if (arr < goal_start || arr > goal_end)
+                    {
+                        continue;
+                    }
+                    if (!validateMotion(start_pose_, goal_pose_, dep, arr))
+                    {
+                        continue;
+                    }
 
-        for (int i = 0; i < solution_.times.size(); i++) {
-            log(solution_.trajectory[i], LogLevel::DEBUG);
-            log("solution times: " + std::to_string(solution_.times[i]), LogLevel::DEBUG);
+                    auto goal_v = std::make_shared<Vertex>(goal_pose_);
+                    goal_v->setSafeInterval(goal_si);
+                    goal_v->addParent(start_root);
+                    goal_v->setOtherTime(stepToTime(dep));
+                    goal_v->setTime(stepToTime(arr));
+                    addVertexIndexed(start_tree_, goal_v);
+                    totalTreeSize++;
+
+                    buildSolutionFromConnection(goal_v, goal_tree_.roots[0]); // start_node==goal_v (in start tree), goal_node is goal root
+                    if (options.terminate_on_first_sol && best_cost_ < std::numeric_limits<double>::infinity())
+                    {
+                        return true;
+                    }
+                    break;
+                }
+            }
         }
-
-        return true;
     }
 
-    
-    while (!terminate(options)) {
-        log("iteration: " + std::to_string(numIterations_) 
-            + ", start tree size " + std::to_string(start_tree_.vertices.size())
-            + ", goal tree size " + std::to_string(goal_tree_.vertices.size()), LogLevel::DEBUG);
+    while (!terminate(options))
+    {
         numIterations_++;
 
-        // 1. sample new state
-        RobotPose new_pose;
-        bool found_sample = sample(new_pose);
-        if (!found_sample) {
-            log("Failed to sample new pose", LogLevel::DEBUG);
+        RobotPose q_sample;
+        if (!sample(q_sample))
+        {
             swap_trees();
             continue;
         }
-    
         numValidSamples_++;
-        log("Sampled new pose", LogLevel::DEBUG);
-        log(new_pose, LogLevel::DEBUG);
-        
-        // 4. connect the safe intervals to the other tree
-        std::vector<VertexPtr> added_vertices;
-        GrowState extended_state = step(new_pose, added_vertices, *current_tree_, goal_tree, false);
-        if (extended_state == TRAPPED) {
+
+        RobotPose q_new;
+        const GrowState gs = extendTowards(q_sample, *current_tree_, q_new);
+        if (gs == TRAPPED)
+        {
             swap_trees();
             continue;
         }
 
-        // 5. connect to the other tree
-        assert(added_vertices.size() > 0);
-        RobotPose delta_pose = added_vertices[0]->pose;
-        std::vector<VertexPtr> connected_vertex; // vertex in current tree, which are also connected to other tree
-        if (connect(delta_pose, connected_vertex, *other_tree_, !goal_tree) == REACHED) {
-            update_solution(connected_vertex, goal_tree);
-        }
-        
-
-        // 5. swap_trees
-        swap_trees();
-
-    }
-
-    log("Final iteration: " + std::to_string(numIterations_) 
-            + ", " + std::to_string(numValidSamples_) + " valid samples"
-            + ", start tree size " + std::to_string(start_tree_.vertices.size())
-            + ", goal tree size " + std::to_string(goal_tree_.vertices.size()), LogLevel::INFO);
-
-    if (best_cost_ < std::numeric_limits<double>::max()) {
-        return true;
-    }
-    return false;
-}
-
-GrowState SIPP_RRT::step(const RobotPose &new_pose, std::vector<VertexPtr> &added_vertices, Tree &tree, bool goal_tree, bool connect)
-{
-    if (connect) {
-        if (goal_tree) {
-            log("Connecting to goal tree", LogLevel::DEBUG);
-        }
-        else {
-            log("Connecting to start tree", LogLevel::DEBUG);
-        }
-    }
-    else {
-        if (goal_tree) {
-            log("Extending from goal tree", LogLevel::DEBUG);
-        }
-        else {
-            log("Extending from start tree", LogLevel::DEBUG);
-        }
-    }
-
-    added_vertices.clear();
-
-    // 2. extend this to the nearest tree
-    RobotPose delta_pose;
-    RobotPose nearest_pose;
-    GrowState extended = extend(new_pose, tree, delta_pose, nearest_pose, goal_tree);
-    if (extended == TRAPPED) {
-        log("Trapped", LogLevel::DEBUG);
-        return TRAPPED;
-    }
-
-    if (!connect || extended != REACHED) {
-        // add to the current tree
-        // 3. compute safe interval
-
-        std::vector<SafeInterval> safe_intervals;
-        findSafeIntervals(delta_pose, safe_intervals);
-        log("Found " + std::to_string(safe_intervals.size()) + " safe intervals", LogLevel::DEBUG);
-        
-        // 4. connect the safe intervals to the other tree
-        for (int i = 0; i < safe_intervals.size(); i++) {
-            auto newVertex = std::make_shared<Vertex>(delta_pose);
-            newVertex->setSafeInterval(safe_intervals[i]);
-            if (setSIParent(newVertex, nearest_pose, tree, goal_tree, false) == REACHED) {
-                log("Connected safe interval " + std::to_string(newVertex->time) + " to parent t=" + std::to_string(newVertex->parent->time), LogLevel::DEBUG);
-                added_vertices.push_back(newVertex);
-            }
-        }
-    }
-    else {
-        // add to the opposite tree, si already computed
-        Tree* other_tree_ = (goal_tree) ? &start_tree_ : &goal_tree_;
-        std::vector<VertexPtr> new_vertices_other_tree = other_tree_->vertex_map[new_pose];
-        for (auto &new_vertex : new_vertices_other_tree) {
-            if (setSIParent(new_vertex, nearest_pose, tree, goal_tree, true) == REACHED) {
-                log("Connected to other tree " + std::to_string(new_vertex->time) + " to parent t=" + std::to_string(new_vertex->parent->time)
-                     + ", other parent t=" + std::to_string(new_vertex->otherParent->time), LogLevel::DEBUG);
-                added_vertices.push_back(new_vertex);
-            }
-        }
-    }
-    if (added_vertices.size() == 0) {
-        log("Safe interval not connected", LogLevel::DEBUG);
-        return TRAPPED;
-    }
-    
-    return extended;
-}
-
-bool SIPP_RRT::interpolate(const RobotPose &pose_1, const RobotPose &pose_2, RobotTrajectory &solution) {
-    double distance = instance_->computeDistance(pose_1, pose_2);
-    double travel_t = distance / vMax_;
-    travel_t = std::max(travel_t, min_time_);
-    travel_t = std::ceil(travel_t / col_dt_) * col_dt_;
-
-    int num_steps = std::round(travel_t / col_dt_) + 1;
-    double t = 0.0;
-    for (int i = 0; i < num_steps; i++) {
-        double alpha = t / travel_t;
-        RobotPose pose = instance_->interpolate(pose_1, pose_2, alpha);
-
-        // check collision statically
-        if (i > 0) {
-            if (instance_->checkCollision({pose}, false) == true) {
-                return false;
-            }
-            if (validateMotion(solution.trajectory.back(), pose, solution.times.back(), t) == false) {
-                return false;
-            }
-        }
-
-        solution.trajectory.push_back(pose);
-        solution.times.push_back(t);
-        t += col_dt_;
-    }
-    solution.cost = travel_t;
-    return true;
-}
-
-
-bool SIPP_RRT::terminate(const PlannerOptions &options) {
-    log("num iterations: " + std::to_string(numIterations_) + " max iterations: " + std::to_string(options.max_planning_iterations), LogLevel::DEBUG);
-    if (numIterations_ > options.max_planning_iterations) {
-        return true;
-    }
-    auto elapsed = std::chrono::high_resolution_clock::now() - start_time_;
-    double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count();
-    log("elapsed time: " + std::to_string(elapsed_seconds) + " max time: " + std::to_string(options.max_planning_time), LogLevel::DEBUG);
-    if (elapsed_seconds > options.max_planning_time) {
-        return true;
-    }
-    if (options.terminate_on_first_sol && best_cost_ < std::numeric_limits<double>::max()) {
-        return true;
-    }
-
-    return false;
-}
-
-bool SIPP_RRT::sample(RobotPose &new_pose) {
-    new_pose = instance_->initRobotPose(robot_id_);
-    bool found_sample = false;
-    int tries = 0;
-    int max_tries = 10;
-
-    while (!found_sample && tries < max_tries) {
-        tries++;
-        //log("sample tries: " + std::to_string(tries), LogLevel::DEBUG);
-        found_sample = instance_->sample(new_pose);
-        if (!found_sample) {
+        std::vector<SafeInterval> sis;
+        if (!findSafeIntervals(q_new, sis) || sis.empty())
+        {
+            swap_trees();
             continue;
         }
-        // // calculate time bound
-        // double min_time = instance_->computeDistance(start_pose_, newpose) / vMax_;
-        // double max_time = max_time_ - instance_->computeDistance(newpose, goal_pose_) / vMax_;
-        // if (min_time > max_time) {
-        //     found_sample = false;
-        //     log("sample pose not reachable", LogLevel::DEBUG);
-        //     continue;
-        // }
-    
-    }
 
-    return found_sample;
-}
+        const auto new_nodes = growTree(q_new, sis, *current_tree_, current_is_goal_tree_);
+        if (new_nodes.empty())
+        {
+            swap_trees();
+            continue;
+        }
 
-
-GrowState SIPP_RRT::setSIParent(VertexPtr &new_sample, const RobotPose &nearest_pose, Tree &tree, 
-        bool goalTree, bool otherParent) {
-    std::vector<VertexPtr> nearest_vertices = tree.vertex_map[nearest_pose];
-
-    auto new_si = new_sample->si;
-    log("new sample safe interval [" + std::to_string(new_si.t_start) + " " + std::to_string(new_si.t_end) + "]", LogLevel::DEBUG);
-    log("nearest vertices size: " + std::to_string(nearest_vertices.size()), LogLevel::DEBUG);
-
-    double dist = instance_->computeDistance(nearest_pose, new_sample->pose);
-    double travel_t = dist / vMax_;
-    travel_t = std::ceil(travel_t / col_dt_) * col_dt_;
-
-    if (!goalTree) {
-        // arrive as early as possible
-        // sort the nearest vertices by time ascending
-        std::sort(nearest_vertices.begin(), nearest_vertices.end(), 
-            [](const VertexPtr &a, const VertexPtr &b) {
-                return a->time < b->time;
-            });
-
-        for (auto &nearest_vertex : nearest_vertices) {
-            log("nearest vertex in start tree:", LogLevel::DEBUG);
-            log(nearest_vertex->pose, LogLevel::DEBUG);
-            auto nearest_si = nearest_vertex->si;
-            double nearest_t = std::ceil(nearest_vertex->time / col_dt_) * col_dt_;
-            double t_earliest = nearest_t + travel_t;
-            double nearest_t_upperb = std::ceil(nearest_si.t_end / col_dt_) * col_dt_;
-            double t_latest = nearest_t_upperb + travel_t;
-            log("arrive si: [" + std::to_string(t_earliest) + ", " + std::to_string(t_latest) + "]", LogLevel::DEBUG);
-            if (t_earliest > new_si.t_end || t_latest < new_si.t_start) {
-                continue;
-            }
-
-            // iterate over all discrete timestep from t_earliest to t_latest
-            double t = std::max(t_earliest, new_si.t_start);
-            double until = std::min(t_latest, new_si.t_end);
-            // if until is infinity, then set it to obs_span + t_travel
-            if (until > 999999) {
-                until = moving_obs_span_ + travel_t;
-            }
-            while (t <= until) {
-                if (validateMotion(nearest_pose, new_sample->pose, t - travel_t, t)) {
-                    if (otherParent) {
-                        if (t <= new_sample->other_time) {
-                            new_sample->setTime(t);
-                            new_sample->addOtherParent(nearest_vertex);
-                            new_sample->otherParent->setOtherTime(t - travel_t);
-                            tree.addVertex(new_sample);
-                            return REACHED;
-                        }
-                    }
-                    else {
-                        new_sample->setTime(t);
-                        new_sample->addParent(nearest_vertex);
-                        new_sample->parent->setOtherTime(t - travel_t);
-                        tree.addVertex(new_sample);
-                        return REACHED;
-                    }
-                }
-                t += col_dt_;
+        VertexPtr start_node;
+        VertexPtr goal_node;
+        if (tryConnectOtherTree(q_new, options, current_is_goal_tree_, start_node, goal_node))
+        {
+            (void)buildSolutionFromConnection(start_node, goal_node);
+            if (options.terminate_on_first_sol && best_cost_ < std::numeric_limits<double>::infinity())
+            {
+                return true;
             }
         }
+
+        swap_trees();
     }
-    else {
-        // goal tree, arrive as late as possible
-        // sort the nearest vertices by other_time descending
-        std::sort(nearest_vertices.begin(), nearest_vertices.end(), 
-            [](const VertexPtr &a, const VertexPtr &b) {
-                return a->other_time > b->other_time;
-            });
-        
-        for (auto &nearest_vertex : nearest_vertices) {
-            
-            auto nearest_si = nearest_vertex->si;
-            double nearest_t = std::ceil(nearest_vertex->other_time / col_dt_) * col_dt_;
-            double t_latest = nearest_t - travel_t;
-            double t_earliest = std::ceil(nearest_si.t_start / col_dt_) * col_dt_ - travel_t;
-            if (t_earliest > new_si.t_end || t_latest < new_si.t_start) {
-                continue;
-            }
 
-            // iterate over all discrete timestep from t_latest to t_earliest
-            double t = std::min(t_latest, new_si.t_end);
-            double until = std::max(t_earliest, new_si.t_start);
-
-            log("nearest vertex in goal tree:", LogLevel::DEBUG);
-            log(nearest_vertex->pose, LogLevel::DEBUG);
-            log("leave si: [" + std::to_string(until) + ", " + std::to_string(t_latest) + "]", LogLevel::DEBUG);
-
-            while (t >= until) {
-                if (validateMotion(nearest_pose, new_sample->pose, t, t + travel_t)) {
-                    if (otherParent) {
-                        if (t >= new_sample->time) {
-                            new_sample->setOtherTime(t);
-                            new_sample->addOtherParent(nearest_vertex);
-                            new_sample->otherParent->setTime(t + travel_t);
-                            tree.addVertex(new_sample);
-                            return REACHED;
-                        }
-                    }
-                    else {
-                        new_sample->setOtherTime(t);
-                        new_sample->addParent(nearest_vertex);
-                        new_sample->parent->setTime(t + travel_t);
-                        tree.addVertex(new_sample);
-                        return REACHED;
-                    }
-                }
-                if (t > 900000) {
-                    // if it is impossible to connect to goal tree with inf t, meaning no moving robots
-                    // move down to moving_obs_span
-                    t = moving_obs_span_;
-                }
-                t -= col_dt_;
-            }
-        }
-    }
-    return TRAPPED;
-
+    return best_cost_ < std::numeric_limits<double>::infinity();
 }
 
-
-double SIPP_RRT::nearest(const RobotPose &sample, VertexPtr &nearest_vertex, const Tree &tree, bool goalTree) {
-    assert(tree.vertices.size() > 0);
-
-    double min_distance = std::numeric_limits<double>::max();
-    for (auto &vertex : tree.vertices) {
-        double distance = instance_->computeDistance(vertex->pose, sample);
-        
-        if (distance < min_distance) {
-            min_distance = distance;
-            nearest_vertex = vertex;
-        }
-    }
-    return min_distance;
-}
-
-GrowState SIPP_RRT::extend(const RobotPose &new_sample, Tree &tree, RobotPose &delta_pose, RobotPose &nearest_pose, bool goalTree) {
-    // find the nearest vertex in the tree
-    VertexPtr nearest_vertex;
-    double distanceSpace = nearest(new_sample, nearest_vertex, tree, goalTree);
-    if (nearest_vertex == nullptr) {
-        log("nearest vertex is null", LogLevel::DEBUG);
-        return TRAPPED;
-    }
-    nearest_pose = nearest_vertex->pose;
-    log("nearest vertex:", LogLevel::DEBUG);
-    log(nearest_pose, LogLevel::DEBUG);
- 
-    bool reached = true;
-    if (distanceSpace <= max_delta_)
+bool SIPP_RRT::terminate(const PlannerOptions &options)
+{
+    if (numIterations_ > options.max_planning_iterations)
     {
-        // check if can directly reach the new sample
-        if (std::abs(distanceSpace) < 1e-6) {
-            log("Reached the new sample", LogLevel::DEBUG);
-            delta_pose = new_sample;
-            return REACHED;
-        }
-        else if (instance_->connect(nearest_pose, new_sample)) {
-            log("Reach the new sample", LogLevel::DEBUG);
-            delta_pose = new_sample;
-            return REACHED;
-        }
-        else {
-            log("Trapped on the way to new sample", LogLevel::DEBUG);
-            return TRAPPED;
-        }
+        return true;
     }
-    else {
-        reached = false;
-        // steer from the nearest vertex to the new sample
-        delta_pose = instance_->initRobotPose(robot_id_);
-        if (instance_->steer(nearest_vertex->pose, new_sample, max_delta_, delta_pose)) {
-            log("Steer to the new sample", LogLevel::DEBUG);
-            return ADVANCED;
-        }
-        else {
-            log("Trapped on the way to new sample", LogLevel::DEBUG);
-            return TRAPPED;
-        }
-    } 
-
-    return TRAPPED;
+    const auto elapsed = std::chrono::high_resolution_clock::now() - start_time_;
+    const double elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count();
+    if (elapsed_seconds > options.max_planning_time)
+    {
+        return true;
+    }
+    if (options.terminate_on_first_sol && best_cost_ < std::numeric_limits<double>::infinity())
+    {
+        return true;
+    }
+    return false;
 }
 
-void SIPP_RRT::precompute_obs_pose() {
-    moving_obs_span_ = 0.0;
-    for (int i = 0; i < obstacles_.size(); i++) {
-        RobotTrajectory obs = obstacles_[i];
-        double tend = obs.times.back();
-        moving_obs_span_ = std::max(moving_obs_span_, tend);
-    }
-    
-    moving_obs_steps_ = std::ceil(moving_obs_span_ / col_dt_) + 1;
-    
-    // precompute all the obstacle poses for all the obstacle robots
-    obs_poses_.clear();
-    obs_poses_.reserve(obstacles_.size());
-    for (const RobotTrajectory &obs : obstacles_) {
-        std::vector<RobotPose> obs_i_pose;
-        obs_i_pose.reserve(moving_obs_steps_);
-
-        int ind = 0;
-        // compile this dynamic obstacle's poses at each time step
-        for (int s = 0; s < moving_obs_steps_; s++) {
-            double t = s * col_dt_;
-            while (ind + 1 < obs.times.size() && obs.times[ind + 1] <= t) {
-                ind++;
-            }
-            if (ind + 1 == obs.times.size()) {
-                // assuming obstacle stays at the end of the trajectory
-                obs_i_pose.push_back(obs.trajectory[ind]);
-            } else {
-                double alpha = (t - obs.times[ind]) / (obs.times[ind + 1] - obs.times[ind]);
-                RobotPose obs_i_pose_s = instance_->interpolate(obs.trajectory[ind], obs.trajectory[ind + 1], alpha);
-                obs_i_pose.push_back(obs_i_pose_s);
-            }
-        }
-        obs_poses_.push_back(obs_i_pose);
-    }
-}
-
-bool SIPP_RRT::validateMotion(const RobotPose &pose_1, const RobotPose &pose_2, double t1, double t2) {
-    // check inter agent collision
-    assert (t1 <= t2);
-    int num_steps = (t2 - t1) / col_dt_ + 1;
-
-    int s_t1 = t1 / col_dt_;
-    // check for inter-agent collision
-    for (int s = 0; s < num_steps; s++) {
-        double t = t1 + s * col_dt_;
-        double alpha = (t - t1) / (t2 - t1);
-        RobotPose a_pose = instance_->interpolate(pose_1, pose_2, alpha);
-        int s_t = s + s_t1;
-        if (s_t >= moving_obs_steps_) {
-            s_t = moving_obs_steps_ - 1;
-        }
-        for (int i = 0; i < obs_poses_.size(); i++) {
-            if (instance_->checkCollision({a_pose, obs_poses_[i][s_t]}, true) == true) {
-                return false;
-            }
-
-        }
-    }
-    return true;
-}
-
-GrowState SIPP_RRT::connect(const RobotPose &delta_pose, std::vector<VertexPtr> &connected_vertex, Tree &tree, bool goalTree) {
-    GrowState gsc = ADVANCED;
-    while (gsc == ADVANCED) {
-        // repeat the steps of extending, finding safe intervals, and adding parents
-        std::vector<VertexPtr> added_vertex;
-        gsc = step(delta_pose, added_vertex, tree, goalTree, true);
-        if (gsc == REACHED) {
-            connected_vertex = added_vertex;
-            return REACHED;
-        }
-    }
-    return gsc;
-}
-
-void SIPP_RRT::shortenSITime(VertexPtr connected_vertex, bool goal_tree) {
-    auto shortenTime = [&](VertexPtr &current, VertexPtr &other) {
-        SafeInterval other_si = other->si;
-        double dist = instance_->computeDistance(current->pose, other->pose);
-        double travel_t = dist / vMax_;
-        travel_t = std::ceil(travel_t / col_dt_) * col_dt_;
-
-        auto nearest_si = current->si;
-        double nearest_t = std::ceil(current->time / col_dt_) * col_dt_;
-        double t_earliest = nearest_t + travel_t;
-        double nearest_t_upperb = std::ceil(nearest_si.t_end / col_dt_) * col_dt_;
-        double t_latest = nearest_t_upperb + travel_t;
-        log("arrive si: [" + std::to_string(t_earliest) + ", " + std::to_string(t_latest) + "]", LogLevel::DEBUG);
-
-        // iterate over all discrete timestep from t_earliest to t_latest
-        double t = std::max(t_earliest, other_si.t_start);
-        double until = std::min(t_latest, other_si.t_end);
-        while (t <= until) {
-            if (validateMotion(current->pose, other->pose, t - travel_t, t)) {
-                other->setTime(t);
-                current->setOtherTime(t - travel_t);
-                break;
-            }
-            t += col_dt_;
-        }
-        current = other;
-    };
-
-    VertexPtr current = connected_vertex;
-    if (!goal_tree) {
-        VertexPtr other = current->otherParent;
-        shortenTime(current, other);
-    }
-
-    while (current->parent != nullptr) {
-        VertexPtr other = current->parent;
-        shortenTime(current, other);
-    }
-}
-
-void SIPP_RRT::update_solution(std::vector<VertexPtr> &connected_vertex, bool goalTree) {
-    VertexPtr new_sample = nullptr;
-    for (auto &vertex : connected_vertex) {
-        if (new_sample == nullptr) {
-            new_sample = vertex;
-        }
-        else if (goalTree) {
-            if (vertex->other_time < new_sample->other_time) {
-                new_sample = vertex;
-            }
-        }
-        else {
-            if (vertex->time < new_sample->time) {
-                new_sample = vertex;
-            }
-        }
-    }
-    // connect the new sample to the 
-    assert (new_sample->parent != nullptr && new_sample->otherParent != nullptr);
-
-    shortenSITime(new_sample, goalTree);
-
-    // trace back the path from the new sample to the root
-    std::vector<VertexPtr> path, back_path;
-    VertexPtr current = new_sample;
-    while (current != nullptr) {
-        path.push_back(current);
-        current = current->parent;
-    }
-    // reverse the stack
-    std::reverse(path.begin(), path.end());
-
-    // trace to the other parent root
-    current = new_sample->otherParent;
-    while (current != nullptr) {
-        back_path.push_back(current);
-        current = current->parent;
-    }
-
-    // concatenate the two paths
-    path.insert(path.end(), back_path.begin(), back_path.end());
-
-    if (goalTree) {
-        std::reverse(path.begin(), path.end());
-    }
-
-    double solutionCost = path.back()->time;
-    if (solutionCost < best_cost_) {
-        best_cost_ = solutionCost;
-        // set the path to the solution
-        solution_.robot_id = robot_id_;
-        solution_.times.clear();
-        solution_.trajectory.clear();
-        solution_.cost = best_cost_;
-        for (int i = 0; i < path.size(); i++) {
-            auto vertex = path[i];
-            solution_.times.push_back(vertex->time);
-            solution_.trajectory.push_back(vertex->pose);
-            if (i < path.size() - 1 && vertex->time < (vertex->other_time - 1e-5)) {
-                solution_.times.push_back(vertex->other_time);
-                solution_.trajectory.push_back(vertex->pose);
-            }
-        }
-        log("Found a better solution with cost: " + std::to_string(best_cost_), LogLevel::INFO);
-        log(solution_, LogLevel::DEBUG);
-    }
-
-    return;
-}
-
-void SIPP_RRT::swap_trees() {
-    current_tree_ = (current_tree_ == &start_tree_) ? &goal_tree_ : &start_tree_;
-    other_tree_ = (other_tree_ == &start_tree_) ? &goal_tree_ : &start_tree_;
-    goal_tree = !goal_tree;
-}
-
-
-bool SIPP_RRT::getPlan(RobotTrajectory &solution) const {
-    if (best_cost_ < std::numeric_limits<double>::max()) {
+bool SIPP_RRT::getPlan(RobotTrajectory &solution) const
+{
+    if (best_cost_ < std::numeric_limits<double>::infinity())
+    {
         solution = solution_;
         return true;
     }
     return false;
 }
 
-double SIPP_RRT::getPlanCost() const {
+double SIPP_RRT::getPlanCost() const
+{
     return best_cost_;
 }

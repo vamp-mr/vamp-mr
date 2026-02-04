@@ -1,6 +1,7 @@
 #include <mr_planner/planning/composite_rrt.h>
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <limits>
 #include <numeric>
@@ -52,6 +53,29 @@ bool CompositeRRTCPlanner::plan(const PlannerOptions &options) {
         }
 
         tree_a.push_back(new_vertex);
+        if (start_nn_.available() && composite_dims_ > 0)
+        {
+            auto *index = (&tree_a == &start_tree_) ? &start_nn_ : (&tree_a == &goal_tree_) ? &goal_nn_ : nullptr;
+            if (index != nullptr)
+            {
+                if (composite_insert_.size() != composite_dims_)
+                {
+                    composite_insert_.assign(composite_dims_, 0.0F);
+                }
+                for (int robot = 0; robot < num_robots_; ++robot)
+                {
+                    const auto rid = static_cast<std::size_t>(robot);
+                    const auto off = composite_offsets_[rid];
+                    const auto dof = composite_dofs_[rid];
+                    assert(new_vertex->poses[rid].joint_values.size() == dof);
+                    for (std::size_t j = 0; j < dof; ++j)
+                    {
+                        composite_insert_[off + j] = static_cast<float>(new_vertex->poses[rid].joint_values[j]);
+                    }
+                }
+                index->insert(composite_insert_.data(), new_vertex);
+            }
+        }
 
         CompositeVertexPtr connection_vertex;
         const auto state = connectTree(tree_b, new_vertex, options, connection_vertex);
@@ -116,8 +140,57 @@ bool CompositeRRTCPlanner::initialize(const PlannerOptions &options) {
     start_vertex->cost = 0.0;
     goal_vertex->cost = 0.0;
 
-    start_tree_.push_back(std::move(start_vertex));
-    goal_tree_.push_back(std::move(goal_vertex));
+    start_tree_.push_back(start_vertex);
+    goal_tree_.push_back(goal_vertex);
+
+    composite_dofs_.clear();
+    composite_offsets_.clear();
+    composite_dims_ = 0;
+    composite_dofs_.resize(static_cast<std::size_t>(num_robots_), 0);
+    composite_offsets_.resize(static_cast<std::size_t>(num_robots_), 0);
+    for (int robot = 0; robot < num_robots_; ++robot)
+    {
+        const auto rid = static_cast<std::size_t>(robot);
+        const std::size_t dof = start_config_[rid].joint_values.size();
+        composite_dofs_[rid] = dof;
+        composite_offsets_[rid] = composite_dims_;
+        composite_dims_ += dof;
+        if (goal_config_[rid].joint_values.size() != dof)
+        {
+            return false;
+        }
+    }
+
+    composite_query_.assign(composite_dims_, 0.0F);
+    composite_insert_.assign(composite_dims_, 0.0F);
+    start_nn_.reset(composite_dims_);
+    goal_nn_.reset(composite_dims_);
+    if (start_nn_.available() && composite_dims_ > 0)
+    {
+        for (int robot = 0; robot < num_robots_; ++robot)
+        {
+            const auto rid = static_cast<std::size_t>(robot);
+            const auto off = composite_offsets_[rid];
+            const auto dof = composite_dofs_[rid];
+            for (std::size_t j = 0; j < dof; ++j)
+            {
+                composite_insert_[off + j] = static_cast<float>(start_config_[rid].joint_values[j]);
+            }
+        }
+        start_nn_.insert(composite_insert_.data(), start_vertex);
+
+        for (int robot = 0; robot < num_robots_; ++robot)
+        {
+            const auto rid = static_cast<std::size_t>(robot);
+            const auto off = composite_offsets_[rid];
+            const auto dof = composite_dofs_[rid];
+            for (std::size_t j = 0; j < dof; ++j)
+            {
+                composite_insert_[off + j] = static_cast<float>(goal_config_[rid].joint_values[j]);
+            }
+        }
+        goal_nn_.insert(composite_insert_.data(), goal_vertex);
+    }
 
     return true;
 }
@@ -196,6 +269,66 @@ CompositeRRTCPlanner::CompositeVertexPtr CompositeRRTCPlanner::nearest(
     const std::vector<RobotPose> &sample) const {
     if (tree.empty() || sample.size() != static_cast<std::size_t>(num_robots_)) {
         return nullptr;
+    }
+
+    const bool allow_kdtree =
+        start_nn_.available() && composite_dims_ > 0 && tree.size() >= mr_planner::planning::kLinearScanThreshold;
+    if (allow_kdtree)
+    {
+        const mr_planner::planning::PoseKDTreeIndex<CompositeVertexPtr> *index = nullptr;
+        if (&tree == &start_tree_)
+        {
+            index = &start_nn_;
+        }
+        else if (&tree == &goal_tree_)
+        {
+            index = &goal_nn_;
+        }
+
+        if (index != nullptr)
+        {
+            if (composite_query_.size() != composite_dims_)
+            {
+                composite_query_.assign(composite_dims_, 0.0F);
+            }
+            for (int robot = 0; robot < num_robots_; ++robot)
+            {
+                const auto rid = static_cast<std::size_t>(robot);
+                const auto off = composite_offsets_[rid];
+                const auto dof = composite_dofs_[rid];
+                if (sample[rid].joint_values.size() != dof)
+                {
+                    return nullptr;
+                }
+                for (std::size_t j = 0; j < dof; ++j)
+                {
+                    composite_query_[off + j] = static_cast<float>(sample[rid].joint_values[j]);
+                }
+            }
+
+            const std::size_t shortlist_k = std::min<std::size_t>(mr_planner::planning::kCompositeShortlistK, tree.size());
+            const auto candidates = index->nearest_k(composite_query_.data(), shortlist_k);
+            double best_distance = std::numeric_limits<double>::max();
+            CompositeVertexPtr best_vertex;
+            for (const auto &cand : candidates)
+            {
+                const auto &vertex = cand.first;
+                if (!vertex)
+                {
+                    continue;
+                }
+                const double dist = compositeDistance(vertex->poses, sample);
+                if (dist < best_distance)
+                {
+                    best_distance = dist;
+                    best_vertex = vertex;
+                }
+            }
+            if (best_vertex)
+            {
+                return best_vertex;
+            }
+        }
     }
 
     double best_distance = std::numeric_limits<double>::max();
@@ -296,6 +429,28 @@ GrowState CompositeRRTCPlanner::connectTree(std::vector<CompositeVertexPtr> &tre
     }
 
     tree.push_back(new_vertex);
+    if (start_nn_.available() && composite_dims_ > 0)
+    {
+        auto *index = (&tree == &start_tree_) ? &start_nn_ : (&tree == &goal_tree_) ? &goal_nn_ : nullptr;
+        if (index != nullptr)
+        {
+            if (composite_insert_.size() != composite_dims_)
+            {
+                composite_insert_.assign(composite_dims_, 0.0F);
+            }
+            for (int robot = 0; robot < num_robots_; ++robot)
+            {
+                const auto rid = static_cast<std::size_t>(robot);
+                const auto off = composite_offsets_[rid];
+                const auto dof = composite_dofs_[rid];
+                for (std::size_t j = 0; j < dof; ++j)
+                {
+                    composite_insert_[off + j] = static_cast<float>(new_vertex->poses[rid].joint_values[j]);
+                }
+            }
+            index->insert(composite_insert_.data(), new_vertex);
+        }
+    }
     last_added = new_vertex;
 
     if (posesEqual(new_vertex->poses, target->poses)) {
@@ -312,6 +467,28 @@ GrowState CompositeRRTCPlanner::connectTree(std::vector<CompositeVertexPtr> &tre
             break;
         }
         tree.push_back(next);
+        if (start_nn_.available() && composite_dims_ > 0)
+        {
+            auto *index = (&tree == &start_tree_) ? &start_nn_ : (&tree == &goal_tree_) ? &goal_nn_ : nullptr;
+            if (index != nullptr)
+            {
+                if (composite_insert_.size() != composite_dims_)
+                {
+                    composite_insert_.assign(composite_dims_, 0.0F);
+                }
+                for (int robot = 0; robot < num_robots_; ++robot)
+                {
+                    const auto rid = static_cast<std::size_t>(robot);
+                    const auto off = composite_offsets_[rid];
+                    const auto dof = composite_dofs_[rid];
+                    for (std::size_t j = 0; j < dof; ++j)
+                    {
+                        composite_insert_[off + j] = static_cast<float>(next->poses[rid].joint_values[j]);
+                    }
+                }
+                index->insert(composite_insert_.data(), next);
+            }
+        }
         current = next;
         last_added = current;
 

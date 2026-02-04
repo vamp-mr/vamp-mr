@@ -1474,6 +1474,22 @@ public:
                 throw std::runtime_error("CBS PRM returned no solution");
             }
         }
+        else if (planner == "priority_sipp_rrt")
+        {
+            options.single_agent_planner = "SIPP_RRT";
+            options.pp_random_order = true;
+            options.pp_restart_time_sec = std::max(0.5, planning_time / 4.0);
+            PriorityPlanner planner_impl(instance_);
+            if (!planner_impl.plan(options))
+            {
+                throw std::runtime_error("Priority SIPP_RRT planning failed");
+            }
+            planner_time = planner_impl.getPlanTime();
+            if (!planner_impl.getPlan(solution))
+            {
+                throw std::runtime_error("Priority SIPP_RRT returned no solution");
+            }
+        }
         else
         {
             throw std::runtime_error("Unknown planner: " + planner);
@@ -2224,6 +2240,22 @@ py::dict plan(const std::string &vamp_environment,
         if (!planner_impl.getPlan(solution))
         {
             throw std::runtime_error("CBS PRM returned no solution");
+        }
+    }
+    else if (planner == "priority_sipp_rrt")
+    {
+        options.single_agent_planner = "SIPP_RRT";
+        options.pp_random_order = true;
+        options.pp_restart_time_sec = std::max(0.5, planning_time / 4.0);
+        PriorityPlanner planner_impl(instance);
+        if (!planner_impl.plan(options))
+        {
+            throw std::runtime_error("Priority SIPP_RRT planning failed");
+        }
+        planner_time = planner_impl.getPlanTime();
+        if (!planner_impl.getPlan(solution))
+        {
+            throw std::runtime_error("Priority SIPP_RRT returned no solution");
         }
     }
     else

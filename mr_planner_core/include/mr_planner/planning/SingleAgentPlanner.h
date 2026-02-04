@@ -47,6 +47,9 @@ struct PlannerOptions {
     bool isRoot = false;
     bool terminate_on_first_sol = true;
     bool pp_random_order = false;
+    // PriorityPlanner random-restart: if > 0, retry planning with a new priority order
+    // every `pp_restart_time_sec` seconds until `max_planning_time` is exhausted.
+    double pp_restart_time_sec = 0.0;
     bool interpolate_first_ = true;
     std::string single_agent_planner = "STRRT";
     std::string log_fname = "";

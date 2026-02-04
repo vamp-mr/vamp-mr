@@ -4,6 +4,7 @@
 #include "mr_planner/planning/SingleAgentPlanner.h"
 #include "mr_planner/core/graph.h"
 #include "mr_planner/planning/roadmap.h"
+#include "mr_planner/planning/nn_kdtree.h"
 #include <memory>
 #include <vector>
 #include <queue>
@@ -55,6 +56,11 @@ protected:
     unsigned int rng_seed_{0};
     bool seed_set_{false};
     std::vector<RobotPose> static_obstacles_;
+
+    mr_planner::planning::PoseKDTreeIndex<std::shared_ptr<Vertex>> start_nn_;
+    mr_planner::planning::PoseKDTreeIndex<std::shared_ptr<Vertex>> goal_nn_;
+    std::vector<float> nn_query_;
+    std::size_t nn_dims_{0};
 };
 
 #endif // MR_PLANNER_RRT_CONNECT_H

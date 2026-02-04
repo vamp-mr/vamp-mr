@@ -78,6 +78,18 @@ bool RRTConnect::init(const PlannerOptions &options) {
     start_tree_.push_back(start_vertex);
     goal_tree_.push_back(goal_vertex);
 
+    nn_dims_ = start_pose_.joint_values.size();
+    nn_query_.assign(nn_dims_, 0.0F);
+    start_nn_.reset(nn_dims_);
+    goal_nn_.reset(nn_dims_);
+    if (start_nn_.available() && nn_dims_ > 0)
+    {
+        mr_planner::planning::pack_joints_l1(start_pose_, nn_query_.data(), nn_dims_);
+        start_nn_.insert(nn_query_.data(), start_vertex);
+        mr_planner::planning::pack_joints_l1(goal_pose_, nn_query_.data(), nn_dims_);
+        goal_nn_.insert(nn_query_.data(), goal_vertex);
+    }
+
     return true;
 }
 
@@ -113,6 +125,11 @@ bool RRTConnect::plan(const PlannerOptions &options) {
             steer(start_vertex, goal_vertex, new_vertex);
             if(validateMotion(start_vertex, new_vertex, options, true)) {
                 start_tree_.push_back(new_vertex);
+                if (start_nn_.available() && nn_dims_ > 0)
+                {
+                    mr_planner::planning::pack_joints_l1(new_vertex->pose, nn_query_.data(), nn_dims_);
+                    start_nn_.insert(nn_query_.data(), new_vertex);
+                }
                 start_vertex = new_vertex;
                 if(new_vertex->pose == goal_vertex->pose) {
                     success = extractSolution(new_vertex, goal_vertex);
@@ -135,6 +152,8 @@ bool RRTConnect::plan(const PlannerOptions &options) {
 
         auto &tree_a = extending_start_tree ? start_tree_ : goal_tree_;
         auto &tree_b = extending_start_tree ? goal_tree_ : start_tree_;
+        auto &nn_a = extending_start_tree ? start_nn_ : goal_nn_;
+        auto &nn_b = extending_start_tree ? goal_nn_ : start_nn_;
 
         RobotPose random_sample;
         if (!randomSample(random_sample)) {
@@ -148,17 +167,32 @@ bool RRTConnect::plan(const PlannerOptions &options) {
 
         if(validateMotion(nearest_vertex, new_tree_a_vertex, options, extending_start_tree)) {
             tree_a.push_back(new_tree_a_vertex);
+            if (nn_a.available() && nn_dims_ > 0)
+            {
+                mr_planner::planning::pack_joints_l1(new_tree_a_vertex->pose, nn_query_.data(), nn_dims_);
+                nn_a.insert(nn_query_.data(), new_tree_a_vertex);
+            }
             std::shared_ptr<Vertex> nearest_tree_b_vertex = nearest(new_tree_a_vertex, tree_b);
             std::shared_ptr<Vertex> new_tree_b_vertex;
             steer(nearest_tree_b_vertex, new_tree_a_vertex, new_tree_b_vertex);
 
             if(validateMotion(nearest_tree_b_vertex, new_tree_b_vertex, options, extending_start_tree)) {
                 tree_b.push_back(new_tree_b_vertex);
+                if (nn_b.available() && nn_dims_ > 0)
+                {
+                    mr_planner::planning::pack_joints_l1(new_tree_b_vertex->pose, nn_query_.data(), nn_dims_);
+                    nn_b.insert(nn_query_.data(), new_tree_b_vertex);
+                }
                 while(true) {
                     std::shared_ptr<Vertex> continued_tree_b_vertex;
                     steer(new_tree_b_vertex, new_tree_a_vertex, continued_tree_b_vertex);
                     if(validateMotion(new_tree_b_vertex, continued_tree_b_vertex, options, extending_start_tree)) {
                         tree_b.push_back(continued_tree_b_vertex);
+                        if (nn_b.available() && nn_dims_ > 0)
+                        {
+                            mr_planner::planning::pack_joints_l1(continued_tree_b_vertex->pose, nn_query_.data(), nn_dims_);
+                            nn_b.insert(nn_query_.data(), continued_tree_b_vertex);
+                        }
                         new_tree_b_vertex = continued_tree_b_vertex;
                     } else {
                         break;
@@ -309,6 +343,40 @@ bool RRTConnect::randomSample(RobotPose &new_sample) {
 }
 
 std::shared_ptr<Vertex> RRTConnect::nearest(const std::shared_ptr<Vertex> &sample, const std::vector<std::shared_ptr<Vertex>> &tree_ref) {
+    if (tree_ref.empty())
+    {
+        return nullptr;
+    }
+
+    const bool allow_kdtree =
+        start_nn_.available() && nn_dims_ > 0 && tree_ref.size() >= mr_planner::planning::kLinearScanThreshold;
+    if (allow_kdtree)
+    {
+        const mr_planner::planning::PoseKDTreeIndex<std::shared_ptr<Vertex>> *index = nullptr;
+        if (&tree_ref == &start_tree_)
+        {
+            index = &start_nn_;
+        }
+        else if (&tree_ref == &goal_tree_)
+        {
+            index = &goal_nn_;
+        }
+
+        if (index != nullptr)
+        {
+            if (nn_query_.size() != nn_dims_)
+            {
+                nn_query_.assign(nn_dims_, 0.0F);
+            }
+            mr_planner::planning::pack_joints_l1(sample->pose, nn_query_.data(), nn_dims_);
+            std::shared_ptr<Vertex> out;
+            if (index->nearest(nn_query_.data(), &out))
+            {
+                return out;
+            }
+        }
+    }
+
     double min_dist = std::numeric_limits<double>::max();
     std::shared_ptr<Vertex> nearest_vertex = nullptr;
 

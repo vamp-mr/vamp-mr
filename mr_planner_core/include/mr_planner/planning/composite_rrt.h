@@ -2,6 +2,7 @@
 #define MR_PLANNER_COMPOSITE_RRT_H
 
 #include "mr_planner/planning/planner.h"
+#include "mr_planner/planning/nn_kdtree.h"
 #include <chrono>
 #include <memory>
 #include <random>
@@ -64,6 +65,14 @@ private:
     std::vector<RobotPose> goal_config_;
     std::vector<CompositeVertexPtr> start_tree_;
     std::vector<CompositeVertexPtr> goal_tree_;
+
+    mr_planner::planning::PoseKDTreeIndex<CompositeVertexPtr> start_nn_;
+    mr_planner::planning::PoseKDTreeIndex<CompositeVertexPtr> goal_nn_;
+    std::vector<std::size_t> composite_dofs_;
+    std::vector<std::size_t> composite_offsets_;
+    std::size_t composite_dims_{0};
+    mutable std::vector<float> composite_query_;
+    std::vector<float> composite_insert_;
 
     mutable std::mt19937 rng_{std::random_device{}()};
     std::chrono::time_point<std::chrono::steady_clock> start_time_;

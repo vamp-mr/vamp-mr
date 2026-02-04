@@ -57,7 +57,9 @@ def find_repo_root() -> Path:
     core_root = Path(__file__).resolve().parents[2]
     if core_root.name == "mr_planner_core":
         maybe_monorepo = core_root.parent
-        if (maybe_monorepo / "mr_planner_lego").is_dir() and (maybe_monorepo / "launch").is_dir():
+        if (maybe_monorepo / "mr_planner_lego").is_dir() and (
+            (maybe_monorepo / "launch").is_dir() or (maybe_monorepo / "vamp").is_dir()
+        ):
             return maybe_monorepo
     return core_root
 
@@ -232,7 +234,7 @@ def main() -> int:
         "--planner",
         action="append",
         default=[],
-        choices=["composite_rrt", "cbs_prm"],
+        choices=["composite_rrt", "cbs_prm", "priority_sipp_rrt"],
         help="Planner backend (repeatable). Default: composite_rrt, cbs_prm",
     )
     parser.add_argument("--pose-mode", choices=["sequential", "all_pairs"], default="all_pairs")

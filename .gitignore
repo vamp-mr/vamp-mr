@@ -11,4 +11,5 @@
 
 **.pyc
 __pycache__/
+outputs/
 
