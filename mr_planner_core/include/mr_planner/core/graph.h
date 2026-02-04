@@ -86,13 +86,30 @@ using VertexPtr = std::shared_ptr<Vertex>;
 // Union find with all optimizations
 class UnionFind {
 public:
-    UnionFind(int n) {
+    UnionFind() = default;
+
+    explicit UnionFind(int n) { reset(n); }
+
+    void reset(int n) {
         parent.resize(n);
-        rank.resize(n, 0);
+        rank.assign(n, 0);
         for (int i = 0; i < n; ++i) {
             parent[i] = i;
         }
     }
+
+    void ensureSize(int n) {
+        if (n <= static_cast<int>(parent.size())) {
+            return;
+        }
+        const int old_size = static_cast<int>(parent.size());
+        parent.resize(n);
+        rank.resize(n, 0);
+        for (int i = old_size; i < n; ++i) {
+            parent[i] = i;
+        }
+    }
+
     int find(int u) {
         if (parent[u] != u) {
             parent[u] = find(parent[u]); // Path compression
@@ -172,6 +189,7 @@ class Graph {
             adjList.emplace_back();
             size++;
             vertex_map_[pose] = vertex;
+            uf_.ensureSize(size);
             return vertex;
         }
 
@@ -181,7 +199,7 @@ class Graph {
             uf_.unionSets(u->id, v->id);
         }
         
-        std::unordered_set<std::shared_ptr<Vertex>> getNeighbors(std::shared_ptr<Vertex> v) {
+        const std::unordered_set<std::shared_ptr<Vertex>> &getNeighbors(const std::shared_ptr<Vertex> &v) const {
             return adjList[v->id];
         }
 
@@ -202,7 +220,7 @@ class Graph {
         std::vector<std::shared_ptr<Vertex>> vertices;
         std::vector<std::unordered_set<std::shared_ptr<Vertex>>> adjList;
         std::unordered_map<RobotPose, std::shared_ptr<Vertex>, RobotPoseHash> vertex_map_;
-        UnionFind uf_{6000};
+        UnionFind uf_;
 
     private:
         friend class boost::serialization::access;

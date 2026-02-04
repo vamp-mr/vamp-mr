@@ -1,6 +1,7 @@
 from ._mr_planner_core import (  # noqa: F401
     Object,
     VampEnvironment,
+    filter_pointcloud,
     graphfile_from_json,
     graphfile_to_json,
     plan,
@@ -15,6 +16,7 @@ from .srdf import pose_matrix_from_named_pose  # noqa: F401
 __all__ = [
     "Object",
     "VampEnvironment",
+    "filter_pointcloud",
     "graphfile_from_json",
     "graphfile_to_json",
     "plan",

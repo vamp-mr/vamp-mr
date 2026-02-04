@@ -10,6 +10,7 @@
 #include <mr_planner/visualization/meshcat_playback.h>
 
 #include <filesystem>
+#include <cctype>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
@@ -87,7 +88,17 @@ bool parse_double(const std::string &s, double *out)
     }
     try
     {
-        *out = std::stod(s);
+        std::size_t idx = 0;
+        const double v = std::stod(s, &idx);
+        while (idx < s.size() && std::isspace(static_cast<unsigned char>(s[idx])))
+        {
+            ++idx;
+        }
+        if (idx != s.size())
+        {
+            return false;
+        }
+        *out = v;
         return true;
     }
     catch (const std::exception &)
@@ -120,13 +131,14 @@ std::vector<std::string> split(const std::string &s, char delim)
     std::string token;
     while (std::getline(ss, token, delim))
     {
-        if (!token.empty() && token.front() == ' ')
+        auto is_ws = [](unsigned char c) { return std::isspace(c) != 0; };
+        while (!token.empty() && is_ws(static_cast<unsigned char>(token.front())))
         {
-            token.erase(0, token.find_first_not_of(' '));
+            token.erase(token.begin());
         }
-        if (!token.empty() && token.back() == ' ')
+        while (!token.empty() && is_ws(static_cast<unsigned char>(token.back())))
         {
-            token.erase(token.find_last_not_of(' ') + 1);
+            token.pop_back();
         }
         if (!token.empty())
         {
@@ -136,10 +148,14 @@ std::vector<std::string> split(const std::string &s, char delim)
     return out;
 }
 
-bool parse_joint_matrix(const std::string &spec, std::vector<std::vector<double>> *out)
+bool parse_joint_matrix(const std::string &spec, std::vector<std::vector<double>> *out, std::string *err)
 {
     if (!out)
     {
+        if (err)
+        {
+            *err = "internal: output is null";
+        }
         return false;
     }
     out->clear();
@@ -147,23 +163,38 @@ bool parse_joint_matrix(const std::string &spec, std::vector<std::vector<double>
     const auto robots = split(spec, ';');
     if (robots.empty())
     {
+        if (err)
+        {
+            *err = "empty robot list (expected semicolon-separated robots)";
+        }
         return false;
     }
     out->reserve(robots.size());
-    for (const auto &robot : robots)
+    for (std::size_t rid = 0; rid < robots.size(); ++rid)
     {
+        const auto &robot = robots[rid];
         const auto vals = split(robot, ',');
         if (vals.empty())
         {
+            if (err)
+            {
+                *err = "robot " + std::to_string(rid) + " has no joint values";
+            }
             return false;
         }
         std::vector<double> joints;
         joints.reserve(vals.size());
-        for (const auto &v : vals)
+        for (std::size_t j = 0; j < vals.size(); ++j)
         {
+            const auto &v = vals[j];
             double x = 0.0;
             if (!parse_double(v, &x))
             {
+                if (err)
+                {
+                    *err = "robot " + std::to_string(rid) + " joint " + std::to_string(j) +
+                           " is not a valid number: " + v;
+                }
                 return false;
             }
             joints.push_back(x);
@@ -454,6 +485,32 @@ bool sample_easy_problem(std::shared_ptr<PlanInstance> instance,
     }
     return false;
 }
+
+std::vector<RobotPose> robot_poses_from_matrix(std::shared_ptr<PlanInstance> instance,
+                                               const std::vector<std::vector<double>> &m)
+{
+    if (!instance)
+    {
+        throw std::runtime_error("internal: instance is null");
+    }
+    std::vector<RobotPose> poses;
+    poses.reserve(m.size());
+    for (std::size_t i = 0; i < m.size(); ++i)
+    {
+        RobotPose p = instance->initRobotPose(static_cast<int>(i));
+        p.joint_values = m[i];
+        poses.push_back(std::move(p));
+    }
+    return poses;
+}
+
+std::string link_label(const LinkCollision &c)
+{
+    std::ostringstream oss;
+    oss << "r" << c.robot_a << ":" << c.link_a.name << " <-> "
+        << "r" << c.robot_b << ":" << c.link_b.name;
+    return oss.str();
+}
 }  // namespace
 
 int main(int argc, char **argv)
@@ -470,9 +527,10 @@ int main(int argc, char **argv)
             {
                 throw std::runtime_error("Both --start and --goal must be provided (or omit both for random)");
             }
-            if (!parse_joint_matrix(args.start, &start) || !parse_joint_matrix(args.goal, &goal))
+            std::string parse_err;
+            if (!parse_joint_matrix(args.start, &start, &parse_err) || !parse_joint_matrix(args.goal, &goal, &parse_err))
             {
-                throw std::runtime_error("Failed to parse --start/--goal joint matrices");
+                throw std::runtime_error("Failed to parse --start/--goal joint matrices: " + parse_err);
             }
             if (start.size() != goal.size())
             {
@@ -575,6 +633,73 @@ int main(int argc, char **argv)
             instance->setGoalPose(i, goal[static_cast<std::size_t>(i)]);
         }
 
+        const auto start_poses = robot_poses_from_matrix(instance, start);
+        const auto goal_poses = robot_poses_from_matrix(instance, goal);
+
+        auto report_collision = [&](const char *label, const std::vector<RobotPose> &poses) {
+            bool col_self = false;
+            bool col_full = false;
+            try
+            {
+                col_self = instance->checkCollision(poses, true);
+                col_full = instance->checkCollision(poses, false);
+            }
+            catch (const std::exception &e)
+            {
+                log(std::string(label) + " collision check threw: " + e.what(), LogLevel::ERROR);
+                return true;
+            }
+
+            if (!col_self && !col_full)
+            {
+                log(std::string(label) + " is collision-free", LogLevel::INFO);
+                return false;
+            }
+
+            log(std::string(label) + " is in collision (self_only=" + (col_self ? "true" : "false") +
+                    ", full=" + (col_full ? "true" : "false") + ")",
+                LogLevel::ERROR);
+
+            for (const auto &mode : {std::pair<bool, const char *>{true, "self_only"}, {false, "full"}})
+            {
+                try
+                {
+                    auto cols = instance->debugCollidingLinks(poses, mode.first);
+                    if (!cols.empty())
+                    {
+                        log(std::string(label) + " colliding links (" + mode.second + "):", LogLevel::ERROR);
+                        const std::size_t max_print = 8;
+                        for (std::size_t k = 0; k < std::min(max_print, cols.size()); ++k)
+                        {
+                            log("  - " + link_label(cols[k]), LogLevel::ERROR);
+                        }
+                        if (cols.size() > max_print)
+                        {
+                            log("  ... (" + std::to_string(cols.size() - max_print) + " more)", LogLevel::ERROR);
+                        }
+                    }
+                }
+                catch (const std::exception &)
+                {
+                    // debugCollidingLinks is best-effort.
+                }
+            }
+            return true;
+        };
+
+        if (report_collision("start", start_poses) || report_collision("goal", goal_poses))
+        {
+            log("Planning aborted: start/goal must be collision-free.", LogLevel::ERROR);
+            log("Tip: omit --start/--goal to sample a valid problem, or use mr_planner_core/scripts/planning/plan_named_poses.py for SRDF named poses.", LogLevel::WARN);
+            return 2;
+        }
+
+        const bool motion_has_collision = instance->checkMultiRobotMotion(start_poses, goal_poses, 0.1, false);
+        if (motion_has_collision)
+        {
+            log("start->goal straight-line motion is in collision (step=0.1). Planner may still succeed, but this is a hard query.", LogLevel::WARN);
+        }
+
         std::filesystem::create_directories(args.output_dir);
 
         PlannerOptions options;
@@ -593,7 +718,9 @@ int main(int argc, char **argv)
             planner.setSeed(args.seed);
             if (!planner.plan(options))
             {
-                log("Planning failed", LogLevel::ERROR);
+                log("Planning failed (planner=composite_rrt, time_limit=" + std::to_string(args.planning_time) +
+                        "s, max_iters=" + std::to_string(options.max_planning_iterations) + ")",
+                    LogLevel::ERROR);
                 return 3;
             }
             planner_time = planner.getPlanTime();

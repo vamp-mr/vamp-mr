@@ -1,4 +1,5 @@
 #include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 
 #include <mr_planner/backends/vamp_env_factory.h>
@@ -13,6 +14,8 @@
 #include <mr_planner/planning/shortcutter.h>
 #include <mr_planner/visualization/meshcat_playback.h>
 
+#include <vamp/collision/filter.hh>
+
 #include "mr_planner_graph.pb.h"
 
 #include <boost/archive/binary_iarchive.hpp>
@@ -26,6 +29,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -107,6 +111,62 @@ std::optional<std::vector<std::vector<double>>> maybe_joint_matrix(const py::obj
         return std::nullopt;
     }
     return obj.cast<std::vector<std::vector<double>>>();
+}
+
+PlanInstance::Point3f point3f_from_py(const py::object &obj, const std::string &label)
+{
+    auto v = obj.cast<std::vector<float>>();
+    if (v.size() != 3U)
+    {
+        throw std::runtime_error(label + " must be a length-3 sequence");
+    }
+    return {v[0], v[1], v[2]};
+}
+
+PlanInstance::PointCloud pointcloud_from_py(const py::object &obj)
+{
+    if (obj.is_none())
+    {
+        return {};
+    }
+
+    if (py::isinstance<py::array>(obj))
+    {
+        auto arr = py::array_t<float, py::array::c_style | py::array::forcecast>::ensure(obj);
+        if (!arr)
+        {
+            throw std::runtime_error("pointcloud: expected a numpy array of shape (N,3)");
+        }
+
+        if (arr.ndim() != 2 || arr.shape(1) != 3)
+        {
+            throw std::runtime_error("pointcloud: expected shape (N,3)");
+        }
+
+        PlanInstance::PointCloud points;
+        points.reserve(static_cast<std::size_t>(arr.shape(0)));
+        auto buf = arr.unchecked<2>();
+        for (py::ssize_t i = 0; i < arr.shape(0); ++i)
+        {
+            points.push_back({buf(i, 0), buf(i, 1), buf(i, 2)});
+        }
+        return points;
+    }
+
+    return obj.cast<PlanInstance::PointCloud>();
+}
+
+py::array_t<float> pointcloud_to_numpy(const PlanInstance::PointCloud &points)
+{
+    py::array_t<float> out({static_cast<py::ssize_t>(points.size()), static_cast<py::ssize_t>(3)});
+    auto buf = out.mutable_unchecked<2>();
+    for (std::size_t i = 0; i < points.size(); ++i)
+    {
+        buf(static_cast<py::ssize_t>(i), 0) = points[i][0];
+        buf(static_cast<py::ssize_t>(i), 1) = points[i][1];
+        buf(static_cast<py::ssize_t>(i), 2) = points[i][2];
+    }
+    return out;
 }
 
 bool sample_easy_problem(std::shared_ptr<PlanInstance> instance,
@@ -747,6 +807,28 @@ public:
         return out;
     }
 
+    void set_joint_positions(const std::vector<std::vector<double>> &joint_positions, bool update_scene = true)
+    {
+        const int num_robots = instance_->getNumberOfRobots();
+        if (static_cast<int>(joint_positions.size()) != num_robots)
+        {
+            throw std::runtime_error("joint_positions robot count mismatch (expected " + std::to_string(num_robots) +
+                                     ", got " + std::to_string(joint_positions.size()) + ")");
+        }
+
+        for (int rid = 0; rid < num_robots; ++rid)
+        {
+            RobotPose pose = instance_->initRobotPose(rid);
+            pose.joint_values = joint_positions[static_cast<std::size_t>(rid)];
+            instance_->moveRobot(rid, pose);
+        }
+
+        if (update_scene)
+        {
+            instance_->updateScene();
+        }
+    }
+
     py::dict build_roadmaps(int roadmap_samples, double roadmap_max_dist, int seed)
     {
         const double init_time_sec = rebuild_roadmap_cache(roadmap_samples, roadmap_max_dist, seed);
@@ -1302,6 +1384,238 @@ public:
     }
     bool has_object(const std::string &name) const { return instance_->hasObject(name); }
     Object get_object(const std::string &name) const { return instance_->getObject(name); }
+
+    py::dict set_pointcloud(const py::object &points_obj, float r_min, float r_max, float r_point)
+    {
+        const auto points = pointcloud_from_py(points_obj);
+
+        const auto t0 = std::chrono::steady_clock::now();
+        instance_->setPointCloud(points, r_min, r_max, r_point);
+        const auto t1 = std::chrono::steady_clock::now();
+
+        invalidate_roadmap_cache();
+
+        py::dict out;
+        out["n_points"] = static_cast<std::uint64_t>(points.size());
+        out["set_time_sec"] = std::chrono::duration<double>(t1 - t0).count();
+        out["r_min"] = r_min;
+        out["r_max"] = r_max;
+        out["r_point"] = r_point;
+        return out;
+    }
+
+    void clear_pointcloud()
+    {
+        instance_->clearPointCloud();
+        invalidate_roadmap_cache();
+    }
+
+    bool has_pointcloud() const { return instance_->hasPointCloud(); }
+
+    std::size_t pointcloud_size() const { return instance_->pointCloudSize(); }
+
+    py::array_t<float> filter_self_from_pointcloud(const py::object &points_obj,
+                                                   const std::vector<std::vector<double>> &joint_positions,
+                                                   float padding) const
+    {
+        const auto points = pointcloud_from_py(points_obj);
+        if (points.empty())
+        {
+            return pointcloud_to_numpy({});
+        }
+
+        const int num_robots = instance_->getNumberOfRobots();
+        if (static_cast<int>(joint_positions.size()) != num_robots)
+        {
+            throw std::runtime_error("joint_positions robot count mismatch");
+        }
+
+        std::vector<RobotPose> poses;
+        poses.reserve(static_cast<std::size_t>(num_robots));
+        for (int rid = 0; rid < num_robots; ++rid)
+        {
+            RobotPose pose = instance_->initRobotPose(rid);
+            pose.joint_values = joint_positions[static_cast<std::size_t>(rid)];
+            poses.push_back(std::move(pose));
+        }
+
+        const auto filtered = instance_->filterSelfFromPointCloud(points, poses, padding);
+        return pointcloud_to_numpy(filtered);
+    }
+
+    std::optional<Object> infer_attached_object_from_pointcloud(const py::object &points_obj,
+                                                                int robot_id,
+                                                                const std::vector<double> &joint_positions,
+                                                                const std::string &name,
+                                                                float search_radius,
+                                                                int min_points,
+                                                                float self_padding,
+                                                                float size_padding) const
+    {
+        if (robot_id < 0 || robot_id >= instance_->getNumberOfRobots())
+        {
+            throw std::runtime_error("robot_id out of range");
+        }
+
+        const auto points = pointcloud_from_py(points_obj);
+        if (points.empty())
+        {
+            return std::nullopt;
+        }
+
+        if (!std::isfinite(search_radius) || search_radius <= 0.0F)
+        {
+            throw std::runtime_error("search_radius must be > 0");
+        }
+        if (min_points < 1)
+        {
+            min_points = 1;
+        }
+        if (!std::isfinite(self_padding) || self_padding < 0.0F)
+        {
+            self_padding = 0.0F;
+        }
+        if (!std::isfinite(size_padding) || size_padding < 0.0F)
+        {
+            size_padding = 0.0F;
+        }
+
+        RobotPose pose = instance_->initRobotPose(robot_id);
+        pose.joint_values = joint_positions;
+
+        const auto filtered = instance_->filterSelfFromPointCloud(points, {pose}, self_padding);
+
+        const Eigen::Isometry3d ee_tf = instance_->getEndEffectorTransformFromPose(pose);
+        const Eigen::Vector3d ee_pos = ee_tf.translation();
+        const double r2 = static_cast<double>(search_radius) * static_cast<double>(search_radius);
+
+        std::vector<Eigen::Vector3d> near;
+        near.reserve(filtered.size());
+        for (const auto &p : filtered)
+        {
+            const double x = static_cast<double>(p[0]);
+            const double y = static_cast<double>(p[1]);
+            const double z = static_cast<double>(p[2]);
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+            {
+                continue;
+            }
+            const Eigen::Vector3d v(x, y, z);
+            if ((v - ee_pos).squaredNorm() <= r2)
+            {
+                near.push_back(v);
+            }
+        }
+
+        if (static_cast<int>(near.size()) < min_points)
+        {
+            return std::nullopt;
+        }
+
+        const Eigen::Isometry3d ee_inv = ee_tf.inverse();
+        Eigen::Vector3d pmin(std::numeric_limits<double>::infinity(),
+                             std::numeric_limits<double>::infinity(),
+                             std::numeric_limits<double>::infinity());
+        Eigen::Vector3d pmax(-std::numeric_limits<double>::infinity(),
+                             -std::numeric_limits<double>::infinity(),
+                             -std::numeric_limits<double>::infinity());
+
+        for (const auto &pw : near)
+        {
+            const Eigen::Vector3d pl = ee_inv * pw;
+            pmin = pmin.cwiseMin(pl);
+            pmax = pmax.cwiseMax(pl);
+        }
+
+        Eigen::Vector3d size = pmax - pmin;
+        if (!size.allFinite())
+        {
+            return std::nullopt;
+        }
+
+        const double pad = static_cast<double>(size_padding);
+        size.array() += 2.0 * pad;
+
+        const Eigen::Vector3d center_local = 0.5 * (pmin + pmax);
+        const Eigen::Vector3d center_world = ee_tf * center_local;
+
+        Eigen::Quaterniond q(ee_tf.linear());
+        if (q.norm() > 1e-12)
+        {
+            q.normalize();
+        }
+        else
+        {
+            q = Eigen::Quaterniond::Identity();
+        }
+
+        Object obj;
+        obj.name = name;
+        obj.state = Object::State::Static;
+        obj.parent_link = "world";
+        obj.robot_id = -1;
+        obj.shape = Object::Shape::Box;
+        obj.x = center_world.x();
+        obj.y = center_world.y();
+        obj.z = center_world.z();
+        obj.qx = q.x();
+        obj.qy = q.y();
+        obj.qz = q.z();
+        obj.qw = q.w();
+        obj.length = std::max(0.0, size.x());
+        obj.width = std::max(0.0, size.y());
+        obj.height = std::max(0.0, size.z());
+
+        return obj;
+    }
+
+    py::dict infer_and_attach_object_from_pointcloud(const py::object &points_obj,
+                                                     int robot_id,
+                                                     const std::vector<double> &joint_positions,
+                                                     const std::string &name,
+                                                     const std::string &link_name,
+                                                     float search_radius,
+                                                     int min_points,
+                                                     float self_padding,
+                                                     float size_padding)
+    {
+        py::dict out;
+        auto obj_opt = infer_attached_object_from_pointcloud(
+            points_obj,
+            robot_id,
+            joint_positions,
+            name,
+            search_radius,
+            min_points,
+            self_padding,
+            size_padding);
+
+        if (!obj_opt)
+        {
+            out["found"] = false;
+            return out;
+        }
+
+        Object obj = *obj_opt;
+        if (instance_->hasObject(obj.name))
+        {
+            instance_->moveObject(obj);
+        }
+        else
+        {
+            instance_->addMoveableObject(obj);
+        }
+
+        RobotPose pose = instance_->initRobotPose(robot_id);
+        pose.joint_values = joint_positions;
+        instance_->attachObjectToRobot(obj.name, robot_id, link_name, pose);
+        instance_->updateScene();
+        invalidate_roadmap_cache();
+
+        out["found"] = true;
+        out["object"] = instance_->getObject(obj.name);
+        return out;
+    }
 
     void attach_object(const std::string &name,
                        int robot_id,
@@ -2939,6 +3253,10 @@ PYBIND11_MODULE(_mr_planner_core, m)
             py::arg("seed") = 1)
         .def_property_readonly("environment_name", &VampEnvironment::environment_name)
         .def("info", &VampEnvironment::info)
+        .def("set_joint_positions",
+             &VampEnvironment::set_joint_positions,
+             py::arg("joint_positions"),
+             py::arg("update_scene") = true)
         .def("set_random_seed", &VampEnvironment::set_random_seed, py::arg("seed"))
         .def("build_roadmaps",
              &VampEnvironment::build_roadmaps,
@@ -3010,6 +3328,41 @@ PYBIND11_MODULE(_mr_planner_core, m)
         .def("remove_object", &VampEnvironment::remove_object, py::arg("name"))
         .def("has_object", &VampEnvironment::has_object, py::arg("name"))
         .def("get_object", &VampEnvironment::get_object, py::arg("name"))
+        .def("set_pointcloud",
+             &VampEnvironment::set_pointcloud,
+             py::arg("points"),
+             py::arg("r_min"),
+             py::arg("r_max"),
+             py::arg("r_point") = 0.0025)
+        .def("clear_pointcloud", &VampEnvironment::clear_pointcloud)
+        .def("has_pointcloud", &VampEnvironment::has_pointcloud)
+        .def("pointcloud_size", &VampEnvironment::pointcloud_size)
+        .def("filter_self_from_pointcloud",
+             &VampEnvironment::filter_self_from_pointcloud,
+             py::arg("points"),
+             py::arg("joint_positions"),
+             py::arg("padding") = 0.0)
+        .def("infer_attached_object_from_pointcloud",
+             &VampEnvironment::infer_attached_object_from_pointcloud,
+             py::arg("points"),
+             py::arg("robot_id"),
+             py::arg("joint_positions"),
+             py::arg("name") = "inferred_object",
+             py::arg("search_radius") = 0.15,
+             py::arg("min_points") = 50,
+             py::arg("self_padding") = 0.01,
+             py::arg("size_padding") = 0.005)
+        .def("infer_and_attach_object_from_pointcloud",
+             &VampEnvironment::infer_and_attach_object_from_pointcloud,
+             py::arg("points"),
+             py::arg("robot_id"),
+             py::arg("joint_positions"),
+             py::arg("name") = "inferred_object",
+             py::arg("link_name") = "",
+             py::arg("search_radius") = 0.15,
+             py::arg("min_points") = 50,
+             py::arg("self_padding") = 0.01,
+             py::arg("size_padding") = 0.005)
         .def("attach_object",
              &VampEnvironment::attach_object,
              py::arg("name"),
@@ -3027,7 +3380,7 @@ PYBIND11_MODULE(_mr_planner_core, m)
              &VampEnvironment::plan,
              py::arg("planner") = "composite_rrt",
              py::arg("planning_time") = 3.0,
-             py::arg("shortcut_time") = 0.1,
+	             py::arg("shortcut_time") = 0.05,
              py::arg("seed") = 1,
              py::arg("sample_attempts") = 200,
              py::arg("max_goal_dist") = 2.0,
@@ -3045,7 +3398,7 @@ PYBIND11_MODULE(_mr_planner_core, m)
         .def("shortcut_trajectory",
              &VampEnvironment::shortcut_trajectory,
              py::arg("trajectory"),
-             py::arg("shortcut_time") = 0.1,
+	             py::arg("shortcut_time") = 0.05,
              py::arg("dt") = 0.1,
              py::arg("seed") = 1,
              py::arg("method") = "thompson")
@@ -3068,7 +3421,7 @@ PYBIND11_MODULE(_mr_planner_core, m)
           py::arg("vamp_environment") = "dual_gp4",
           py::arg("planner") = "composite_rrt",
           py::arg("planning_time") = 3.0,
-          py::arg("shortcut_time") = 0.1,
+	          py::arg("shortcut_time") = 0.05,
           py::arg("seed") = 1,
           py::arg("num_robots") = 2,
           py::arg("dof") = 7,
@@ -3093,7 +3446,7 @@ PYBIND11_MODULE(_mr_planner_core, m)
           py::arg("dot_file") = "",
           py::arg("dt") = 0.0,
           py::arg("vmax") = 1.0,
-          py::arg("shortcut_time") = 0.1);
+	          py::arg("shortcut_time") = 0.05);
 
     m.def("skillplan_to_execution_graph",
           &skillplan_to_graph,
@@ -3105,15 +3458,53 @@ PYBIND11_MODULE(_mr_planner_core, m)
           py::arg("dot_file") = "",
           py::arg("dt") = 0.0,
           py::arg("vmax") = 1.0,
-          py::arg("shortcut_time") = 0.1);
+	          py::arg("shortcut_time") = 0.05);
 
     m.def("vamp_environment_info", &vamp_environment_info, py::arg("vamp_environment"));
+
+    m.def("filter_pointcloud",
+          [](const py::object &points_obj,
+             float min_dist,
+             float max_range,
+             const py::object &origin_obj,
+             const py::object &workspace_min_obj,
+             const py::object &workspace_max_obj,
+             bool cull) -> py::array_t<float>
+          {
+              auto points = pointcloud_from_py(points_obj);
+              if (points.empty())
+              {
+                  return pointcloud_to_numpy({});
+              }
+
+              const auto origin = point3f_from_py(origin_obj, "origin");
+              const auto workspace_min = point3f_from_py(workspace_min_obj, "workspace_min");
+              const auto workspace_max = point3f_from_py(workspace_max_obj, "workspace_max");
+
+              auto filtered = vamp::collision::filter_pointcloud(
+                  points,
+                  min_dist,
+                  max_range,
+                  origin,
+                  workspace_min,
+                  workspace_max,
+                  cull);
+
+              return pointcloud_to_numpy(filtered);
+          },
+          py::arg("points"),
+          py::arg("min_dist") = 0.015,
+          py::arg("max_range") = 2.0,
+          py::arg("origin") = py::make_tuple(0.0, 0.0, 0.0),
+          py::arg("workspace_min") = py::make_tuple(-10.0, -10.0, -10.0),
+          py::arg("workspace_max") = py::make_tuple(10.0, 10.0, 10.0),
+          py::arg("cull") = true);
 
     m.def("shortcut_trajectory",
           &shortcut_trajectory,
           py::arg("trajectory"),
           py::arg("vamp_environment") = "dual_gp4",
-          py::arg("shortcut_time") = 0.1,
+	          py::arg("shortcut_time") = 0.05,
           py::arg("dt") = 0.1,
           py::arg("seed") = 1,
           py::arg("method") = "thompson",

@@ -25,6 +25,13 @@ namespace vamp_env
 {
 namespace
 {
+    constexpr std::array<double, 4> kPandaGripperRodColor = {
+        145.0 / 255.0,
+        30.0 / 255.0,
+        180.0 / 255.0,
+        1.0,
+    };
+
     Object make_box_object(const std::string &name,
                            double x,
                            double y,
@@ -812,6 +819,12 @@ void add_environment_attachments(const EnvironmentConfig &config, PlanInstance &
             0.5,
             Eigen::Vector3d(0.0, 0.0, -0.005),
             rod_orientation);
+        instance.setObjectColor(
+            "panda0_rod",
+            kPandaGripperRodColor[0],
+            kPandaGripperRodColor[1],
+            kPandaGripperRodColor[2],
+            kPandaGripperRodColor[3]);
         add_cylinder_attachment(
             instance,
             1,
@@ -820,20 +833,33 @@ void add_environment_attachments(const EnvironmentConfig &config, PlanInstance &
             0.5,
             Eigen::Vector3d(0.0, 0.0, -0.005),
             rod_orientation);
+        instance.setObjectColor(
+            "panda1_rod",
+            kPandaGripperRodColor[0],
+            kPandaGripperRodColor[1],
+            kPandaGripperRodColor[2],
+            kPandaGripperRodColor[3]);
     }
     else if (config.environment_name == "panda_four_bins")
     {
         const Eigen::Quaterniond rod_orientation = quaternion_from_rpy(0.0, M_PI_2, 0.0);
         for (int robot_id = 0; robot_id < 4; ++robot_id)
         {
+            const std::string rod_name = "panda" + std::to_string(robot_id) + "_gripper_rod";
             add_cylinder_attachment(
                 instance,
                 robot_id,
-                "panda" + std::to_string(robot_id) + "_gripper_rod",
+                rod_name,
                 0.01,
                 0.3,
                 Eigen::Vector3d(0.0, 0.0, -0.005),
                 rod_orientation);
+            instance.setObjectColor(
+                rod_name,
+                kPandaGripperRodColor[0],
+                kPandaGripperRodColor[1],
+                kPandaGripperRodColor[2],
+                kPandaGripperRodColor[3]);
         }
     }
 }

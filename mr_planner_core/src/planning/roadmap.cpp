@@ -1,6 +1,9 @@
 #include "mr_planner/planning/roadmap.h"
 #include "mr_planner/core/logger.h"
 
+#include <nigh/nigh/kdtree_batch.hpp>
+#include <nigh/nigh/lp_space.hpp>
+
 RoadMap::RoadMap(std::shared_ptr<PlanInstance> instance, int robot_id)
     : instance_(instance), robot_id_(robot_id) {
 }
@@ -68,21 +71,61 @@ void RoadMap::buildRoadmap() {
         return;
     }
 
+    using JointKey = Eigen::Matrix<double, 7, 1>;
+
+    struct KDEntry {
+        std::shared_ptr<Vertex> vertex;
+        JointKey key;
+    };
+
+    struct KDKeyFn {
+        const JointKey &operator()(const KDEntry &e) const { return e.key; }
+    };
+
+    using KDSpace = unc::robotics::nigh::metric::L1Space<double, 7>;
+    using KDTree = unc::robotics::nigh::Nigh<
+        KDEntry,
+        KDSpace,
+        KDKeyFn,
+        unc::robotics::nigh::NoThreadSafety,
+        unc::robotics::nigh::KDTreeBatch<8>>;
+
+    auto pose_key = [](const RobotPose &pose) -> JointKey {
+        JointKey key;
+        key.setZero();
+        for (int i = 0; i < key.size(); ++i) {
+            key[i] = (static_cast<std::size_t>(i) < pose.joint_values.size()) ? pose.joint_values[static_cast<std::size_t>(i)] : 0.0;
+        }
+        return key;
+    };
+
+    KDTree kd_tree;
+    std::vector<std::pair<KDEntry, double>> candidates;
+    const std::size_t candidate_k =
+        static_cast<std::size_t>(std::max(roadmap_->num_neighbors * 10, roadmap_->num_neighbors));
+
     while (roadmap_->size < num_samples_) {
         std::shared_ptr<Vertex> newSample;
         if (sampleConditionally(newSample)) {
-            auto sample = roadmap_->addVertex(newSample->pose);
-            auto neighbors = roadmap_->vertices;
-            std::priority_queue<std::pair<double, std::shared_ptr<Vertex>>, std::vector<std::pair<double, std::shared_ptr<Vertex>>>, CompareEdge> nearest;
-            for (auto neighbor : neighbors) {
-                double dist = instance_->computeDistance(sample->pose, neighbor->pose);
-                nearest.push(std::make_pair(dist, neighbor));
+            const auto query_key = pose_key(newSample->pose);
+            candidates.clear();
+            if (roadmap_->size > 0) {
+                const double radius = 2.0 * max_dist_;
+                kd_tree.nearest(candidates, query_key, candidate_k, radius);
             }
 
+            auto sample = roadmap_->addVertex(newSample->pose);
+
             int k = roadmap_->num_neighbors;
-            while (!nearest.empty() && k > 0) {
-                auto neighbor = nearest.top().second;
-                nearest.pop();
+            for (const auto &[entry, dist] : candidates) {
+                (void)dist;
+                if (k <= 0) {
+                    break;
+                }
+                const auto &neighbor = entry.vertex;
+                if (!neighbor) {
+                    continue;
+                }
                 if (validateMotion(sample, neighbor) && roadmap_->getNeighbors(neighbor).size() < roadmap_->num_neighbors) {
                     roadmap_->addEdge(sample, neighbor);
                     k--;
@@ -94,6 +137,8 @@ void RoadMap::buildRoadmap() {
 
             //if (roadmap_->size % 10 == 0)
             //    std::cout << "Roadmap size: " << roadmap_->size << std::endl;
+
+            kd_tree.insert(KDEntry{sample, query_key});
         }
     }
     log("Roadmap size: " + std::to_string(roadmap_->size), LogLevel::INFO);

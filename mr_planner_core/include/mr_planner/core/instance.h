@@ -183,6 +183,9 @@ namespace std {
 
 class PlanInstance {
 public:
+    using Point3f = std::array<float, 3>;
+    using PointCloud = std::vector<Point3f>;
+
     virtual void setVisualizationInstance(const std::shared_ptr<PlanInstance> &instance) {}
     virtual void enableMeshcat(const std::string &/*host*/, std::uint16_t /*port*/) {}
     virtual void disableMeshcat() {}
@@ -249,6 +252,21 @@ public:
     virtual void setPadding(double padding) {throw std::runtime_error("Not implemented");};
     virtual bool setCollision(const std::string& obj_name, const std::string& link_name, bool allow) { throw std::runtime_error("Not implemented");};
     virtual void printKnownObjects() const { throw std::runtime_error("Not implemented");};
+    virtual void setPointCloud(const PointCloud &/*points*/,
+                               float /*r_min*/,
+                               float /*r_max*/,
+                               float /*r_point*/) { throw std::runtime_error("Not implemented"); }
+    virtual void clearPointCloud() { throw std::runtime_error("Not implemented"); }
+    virtual bool hasPointCloud() const { return false; }
+    virtual std::size_t pointCloudSize() const { return 0; }
+    virtual PointCloud filterSelfFromPointCloud(const PointCloud &/*points*/,
+                                                const std::vector<RobotPose> &/*poses*/,
+                                                float /*padding*/) const
+    {
+        throw std::runtime_error("Not implemented");
+    }
+
+    virtual std::uint64_t environmentVersion() const { return environment_version_.load(); }
     // Save/restore full planning scene snapshots
     virtual void pushScene() { throw std::runtime_error("Not implemented"); };
     virtual void popScene(bool apply_to_sim = true) { throw std::runtime_error("Not implemented"); };
@@ -366,6 +384,7 @@ protected:
     static shape_msgs::SolidPrimitive getPrimitive(const Object &obj);
     static geometry_msgs::Pose getPose(const Object &obj);
 #endif
+    void bumpEnvironmentVersion() { ++environment_version_; }
 
     int num_robots_;
     double v_max_ = 1.0;
@@ -376,6 +395,7 @@ protected:
     std::unordered_map<std::string, Object> objects_;
 
     int num_collision_checks_ = 0;
+    std::atomic<std::uint64_t> environment_version_{0};
     std::string pose_name_;
     std::string instance_type_ = "PlanInstance";
 

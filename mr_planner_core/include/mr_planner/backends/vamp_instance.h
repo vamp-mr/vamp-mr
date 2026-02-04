@@ -89,6 +89,17 @@ public:
 
     const vamp::collision::Environment<vamp::FloatVector<kRake>> &environment() const;
 
+    void setPointCloud(const PlanInstance::PointCloud &points,
+                       float r_min,
+                       float r_max,
+                       float r_point) override;
+    void clearPointCloud() override;
+    bool hasPointCloud() const override;
+    std::size_t pointCloudSize() const override;
+    PlanInstance::PointCloud filterSelfFromPointCloud(const PlanInstance::PointCloud &points,
+                                                      const std::vector<RobotPose> &poses,
+                                                      float padding) const override;
+
     void clearRobotAttachments();
     void setRobotAttachment(int robot_id, const vamp::collision::Attachment<float> &attachment);
     void attachObjectToRobot(const std::string &name,
@@ -722,6 +733,8 @@ private:
     bool meshcat_needs_full_scene_{true};
     std::unordered_set<std::string> meshcat_dirty_objects_;
     std::unordered_set<std::string> meshcat_deleted_objects_;
+    bool meshcat_pointcloud_dirty_{false};
+    bool meshcat_pointcloud_deleted_{false};
     std::thread meshcat_thread_;
     std::mutex meshcat_mutex_;
     std::condition_variable meshcat_cv_;
@@ -732,6 +745,11 @@ private:
     std::unordered_set<std::string> movable_objects_;
     std::vector<RobotPose> robot_shadow_;
     mutable std::mutex objects_mutex_;
+    PlanInstance::PointCloud pointcloud_points_{};
+    std::optional<vamp::collision::CAPT> pointcloud_capt_;
+    float pointcloud_r_min_{0.0F};
+    float pointcloud_r_max_{0.0F};
+    float pointcloud_r_point_{0.0F};
     std::mt19937 rng_{};
 
     using LinkAllowances = std::unordered_map<std::string, std::unordered_set<std::string>>;
@@ -1190,6 +1208,8 @@ void VampInstance<RobotTs...>::setRobotBaseTransform(int robot_id, const Eigen::
             publishMeshcatScene();
         }
     }
+
+    bumpEnvironmentVersion();
 }
 
 template <typename... RobotTs>
@@ -1258,6 +1278,213 @@ const vamp::collision::Environment<vamp::FloatVector<VampInstance<RobotTs...>::k
 VampInstance<RobotTs...>::environment() const
 {
     return environment_;
+}
+
+template <typename... RobotTs>
+void VampInstance<RobotTs...>::setPointCloud(const PlanInstance::PointCloud &points,
+                                             float r_min,
+                                             float r_max,
+                                             float r_point)
+{
+    if (points.empty())
+    {
+        clearPointCloud();
+        return;
+    }
+
+    if (r_min <= 0.0F || r_max <= 0.0F || r_point <= 0.0F)
+    {
+        throw std::invalid_argument("VampInstance: pointcloud radii must be > 0");
+    }
+    if (r_min > r_max)
+    {
+        throw std::invalid_argument("VampInstance: pointcloud r_min must be <= r_max");
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(objects_mutex_);
+        pointcloud_points_ = points;
+        pointcloud_r_min_ = r_min;
+        pointcloud_r_max_ = r_max;
+        pointcloud_r_point_ = r_point;
+        if (!pointcloud_points_.empty())
+        {
+            pointcloud_capt_.emplace(pointcloud_points_, r_min, r_max, r_point);
+        }
+        else
+        {
+            pointcloud_capt_.reset();
+        }
+        meshcat_pointcloud_dirty_ = true;
+        meshcat_pointcloud_deleted_ = false;
+    }
+
+    rebuildEnvironment();
+
+    if (meshcat_enabled_)
+    {
+        meshcat_dirty_ = true;
+        if (meshcat_options_.auto_flush)
+        {
+            publishMeshcatScene();
+        }
+    }
+}
+
+template <typename... RobotTs>
+void VampInstance<RobotTs...>::clearPointCloud()
+{
+    {
+        std::lock_guard<std::mutex> lock(objects_mutex_);
+        pointcloud_points_.clear();
+        pointcloud_capt_.reset();
+        pointcloud_r_min_ = 0.0F;
+        pointcloud_r_max_ = 0.0F;
+        pointcloud_r_point_ = 0.0F;
+        meshcat_pointcloud_dirty_ = false;
+        meshcat_pointcloud_deleted_ = true;
+    }
+
+    rebuildEnvironment();
+
+    if (meshcat_enabled_)
+    {
+        meshcat_dirty_ = true;
+        if (meshcat_options_.auto_flush)
+        {
+            publishMeshcatScene();
+        }
+    }
+}
+
+template <typename... RobotTs>
+bool VampInstance<RobotTs...>::hasPointCloud() const
+{
+    std::lock_guard<std::mutex> lock(objects_mutex_);
+    return pointcloud_capt_.has_value();
+}
+
+template <typename... RobotTs>
+std::size_t VampInstance<RobotTs...>::pointCloudSize() const
+{
+    std::lock_guard<std::mutex> lock(objects_mutex_);
+    return pointcloud_points_.size();
+}
+
+template <typename... RobotTs>
+PlanInstance::PointCloud VampInstance<RobotTs...>::filterSelfFromPointCloud(
+    const PlanInstance::PointCloud &points,
+    const std::vector<RobotPose> &poses,
+    float padding) const
+{
+    if (points.empty())
+    {
+        return {};
+    }
+
+    if (padding < 0.0F)
+    {
+        padding = 0.0F;
+    }
+
+    PoseArray gathered = gatherPoses(poses, true);
+
+    struct SphereF
+    {
+        float x;
+        float y;
+        float z;
+        float r;
+    };
+
+    std::vector<SphereF> spheres_world;
+    spheres_world.reserve(256);
+
+    auto append_spheres_for_robot = [&](auto index_tag)
+    {
+        constexpr std::size_t Index = decltype(index_tag)::value;
+        if (Index >= kRobotCount)
+        {
+            return;
+        }
+        const RobotPose *pose_ptr = gathered[Index];
+        if (!pose_ptr)
+        {
+            return;
+        }
+
+        using Robot = RobotAt<Index>;
+        typename Robot::template Spheres<kRake> spheres{};
+        Robot::sphere_fk(configurationBlockFromPose<Robot>(*pose_ptr), spheres);
+
+        const Eigen::Isometry3f base_tf = base_transforms_[Index];
+        for (std::size_t s = 0; s < Robot::n_spheres; ++s)
+        {
+            const float lx = static_cast<float>(spheres.x[{s, 0}]);
+            const float ly = static_cast<float>(spheres.y[{s, 0}]);
+            const float lz = static_cast<float>(spheres.z[{s, 0}]);
+            const float radius = static_cast<float>(spheres.r[{s, 0}]) + padding;
+            const Eigen::Vector3f world = base_tf * Eigen::Vector3f(lx, ly, lz);
+            spheres_world.push_back({world.x(), world.y(), world.z(), radius});
+        }
+
+        std::optional<vamp::collision::Attachment<float>> attachment;
+        {
+            std::lock_guard<std::mutex> lock(objects_mutex_);
+            attachment = attachments_[Index];
+        }
+
+        if (attachment)
+        {
+            const Eigen::Isometry3f ee_tf = endEffectorTransformForRobot<Index>(*pose_ptr);
+            attachment->pose(ee_tf);
+            for (const auto &s : attachment->posed_spheres)
+            {
+                spheres_world.push_back({s.x, s.y, s.z, s.r + padding});
+            }
+        }
+    };
+
+    for_each_index(std::make_index_sequence<kRobotCount>{}, append_spheres_for_robot);
+
+    if (spheres_world.empty())
+    {
+        return points;
+    }
+
+    PlanInstance::PointCloud filtered;
+    filtered.reserve(points.size());
+    for (const auto &p : points)
+    {
+        const float x = p[0];
+        const float y = p[1];
+        const float z = p[2];
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z))
+        {
+            continue;
+        }
+
+        bool collides = false;
+        for (const auto &s : spheres_world)
+        {
+            const float dx = x - s.x;
+            const float dy = y - s.y;
+            const float dz = z - s.z;
+            const float dist2 = dx * dx + dy * dy + dz * dz;
+            if (dist2 <= s.r * s.r)
+            {
+                collides = true;
+                break;
+            }
+        }
+
+        if (!collides)
+        {
+            filtered.push_back(p);
+        }
+    }
+
+    return filtered;
 }
 
 
@@ -2991,6 +3218,12 @@ void VampInstance<RobotTs...>::rebuildEnvironment()
         environment_input_ = vamp::collision::Environment<float>(*environment_static_);
     }
 
+    environment_input_.pointclouds.clear();
+    if (pointcloud_capt_)
+    {
+        environment_input_.pointclouds.push_back(*pointcloud_capt_);
+    }
+
     for (const auto &name : movable_objects_)
     {
         const auto it = objects_.find(name);
@@ -3016,6 +3249,7 @@ void VampInstance<RobotTs...>::rebuildEnvironment()
     environment_input_.sort();
     environment_ = vamp::collision::Environment<vamp::FloatVector<kRake>>(environment_input_);
     vamp::collision::detail::clear_environment_transform_cache<kRake>();
+    bumpEnvironmentVersion();
 }
 
 template <typename... RobotTs>
@@ -3614,6 +3848,13 @@ void VampInstance<RobotTs...>::resetScene(bool reset_sim) {
         std::lock_guard<std::mutex> lock(objects_mutex_);
         objects_.clear();
         movable_objects_.clear();
+        pointcloud_points_.clear();
+        pointcloud_capt_.reset();
+        pointcloud_r_min_ = 0.0F;
+        pointcloud_r_max_ = 0.0F;
+        pointcloud_r_point_ = 0.0F;
+        meshcat_pointcloud_dirty_ = true;
+        meshcat_pointcloud_deleted_ = true;
     }
     rebuildEnvironment();
 }
@@ -3855,6 +4096,8 @@ void VampInstance<RobotTs...>::publishMeshcatScene()
 
     Json::Value objects(Json::arrayValue);
     Json::Value deleted_objects(Json::arrayValue);
+    Json::Value pointclouds(Json::arrayValue);
+    Json::Value deleted_pointclouds(Json::arrayValue);
     {
         std::lock_guard<std::mutex> lock(objects_mutex_);
 
@@ -3879,7 +4122,9 @@ void VampInstance<RobotTs...>::publishMeshcatScene()
             entry["quaternion"].append(q.z());
             entry["quaternion"].append(q.w());
 
-            std::array<double, 4> rgba = {0.0, 1.0, 0.0, 1.0};
+            // Default Meshcat object color when no per-object override is set.
+            // RGBA requested as (255, 213, 0, 1) -> normalized to [0,1].
+            std::array<double, 4> rgba = {1.0, 213.0 / 255.0, 0.0, 1.0};
             const auto color_it = meshcat_object_colors_.find(obj.name);
             if (color_it != meshcat_object_colors_.end())
             {
@@ -3938,6 +4183,54 @@ void VampInstance<RobotTs...>::publishMeshcatScene()
         }
         meshcat_dirty_objects_.clear();
         meshcat_deleted_objects_.clear();
+
+        const bool update_pointcloud =
+            meshcat_needs_full_scene_ || meshcat_pointcloud_dirty_ || meshcat_pointcloud_deleted_;
+        if (update_pointcloud)
+        {
+            constexpr const char *kPointCloudName = "scene";
+            if (meshcat_pointcloud_deleted_)
+            {
+                deleted_pointclouds.append(kPointCloudName);
+                meshcat_pointcloud_deleted_ = false;
+            }
+
+            if (!pointcloud_points_.empty())
+            {
+                Json::Value entry;
+                entry["name"] = kPointCloudName;
+                entry["rgba"] = Json::Value(Json::arrayValue);
+                entry["rgba"].append(0.7);
+                entry["rgba"].append(0.7);
+                entry["rgba"].append(0.7);
+                entry["rgba"].append(0.35);
+                entry["point_size"] = 0.003;
+
+                Json::Value pts(Json::arrayValue);
+                constexpr std::size_t kMaxVizPoints = 5000U;
+                const std::size_t stride = (pointcloud_points_.size() > kMaxVizPoints) ?
+                                               ((pointcloud_points_.size() + kMaxVizPoints - 1U) / kMaxVizPoints) :
+                                               1U;
+                for (std::size_t i = 0; i < pointcloud_points_.size(); i += stride)
+                {
+                    const auto &p = pointcloud_points_[i];
+                    if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2]))
+                    {
+                        continue;
+                    }
+                    Json::Value row(Json::arrayValue);
+                    row.append(p[0]);
+                    row.append(p[1]);
+                    row.append(p[2]);
+                    pts.append(std::move(row));
+                }
+                entry["points"] = std::move(pts);
+                pointclouds.append(std::move(entry));
+
+                meshcat_pointcloud_dirty_ = false;
+            }
+        }
+
         meshcat_needs_full_scene_ = false;
     }
 
@@ -3948,6 +4241,14 @@ void VampInstance<RobotTs...>::publishMeshcatScene()
     if (deleted_objects.size() > 0U)
     {
         msg["deleted_objects"] = std::move(deleted_objects);
+    }
+    if (pointclouds.size() > 0U)
+    {
+        msg["pointclouds"] = std::move(pointclouds);
+    }
+    if (deleted_pointclouds.size() > 0U)
+    {
+        msg["deleted_pointclouds"] = std::move(deleted_pointclouds);
     }
 
     if (meshcat_debug_)

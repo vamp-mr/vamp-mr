@@ -12,6 +12,9 @@ Expected message format (all fields optional):
   "objects": [
     {"name": "box", "type": "box", "size": [l,w,h],
      "position": [x,y,z], "quaternion": [qx,qy,qz,qw], "rgba": [r,g,b,a]}
+  ],
+  "pointclouds": [
+    {"name": "scene", "points": [[x,y,z], ...], "rgba": [r,g,b,a], "point_size": 0.003}
   ]
 }
 """
@@ -53,6 +56,15 @@ def pose_to_matrix(position: List[float], quaternion: List[float]):
     qx, qy, qz, qw = quaternion
     tq = tf.quaternion_matrix([qw, qx, qy, qz])
     return tf.concatenate_matrices(tx, tq)
+
+
+def object_pose_to_matrix(obj_type: str, position: List[float], quaternion: List[float]):
+    matrix = pose_to_matrix(position, quaternion)
+    if obj_type == "cylinder":
+        # mr_planner + URDF treat cylinders as length along +Z, but three.js / Meshcat CylinderGeometry
+        # uses length along +Y. Apply a fixed correction so cylinder visuals match URDF conventions.
+        matrix = tf.concatenate_matrices(matrix, tf.rotation_matrix(math.pi / 2.0, [1.0, 0.0, 0.0]))
+    return matrix
 
 
 class MeshcatBridge:
@@ -301,6 +313,37 @@ class MeshcatBridge:
                 self._points_material_cache[point_size_key] = material
             self._viz[path].set_object(geom, material)
 
+    def _set_pointclouds(self, clouds: List[Dict]):
+        for cloud in clouds:
+            name = cloud.get("name", "scene")
+            pts = cloud.get("points", [])
+            rgba = cloud.get("rgba", [0.7, 0.7, 0.7, 0.35])
+            point_size = float(cloud.get("point_size", 0.003))
+
+            path = f"pointclouds/{name}"
+            if not pts:
+                continue
+
+            try:
+                arr = np.asarray(pts, dtype=np.float32)
+            except Exception:
+                continue
+            if arr.ndim != 2 or arr.shape[1] != 3:
+                continue
+
+            points = arr.T  # (3, N)
+            rgb = np.asarray(rgba[:3], dtype=np.float32).reshape(3, 1)
+            colors = np.repeat(rgb, points.shape[1], axis=1)
+
+            geom = g.PointsGeometry(points, colors)
+            point_size_key = round(float(np.clip(point_size, 0.001, 0.05)), 6)
+            material = self._points_material_cache.get(point_size_key)
+            if material is None:
+                material = g.PointsMaterial(size=float(point_size_key), color=0xFFFFFF)
+                self._points_material_cache[point_size_key] = material
+
+            self._viz[path].set_object(geom, material)
+
     def _set_objects(self, objects: List[Dict]):
         for obj in objects:
             name = obj.get("name", "object")
@@ -342,7 +385,7 @@ class MeshcatBridge:
 
             pose_key = tuple(position + quat)
             if self._pose_changed(path, pose_key, self._last_pose_key):
-                self._viz_set_transform(path, pose_to_matrix(position, quat))
+                self._viz_set_transform(path, object_pose_to_matrix(obj_type, position, quat))
             if created:
                 log(f"[bridge] Created object {name} type={obj_type}")
 
@@ -362,6 +405,12 @@ class MeshcatBridge:
             if self._verbose:
                 log(f"[bridge] Deleted {len(deleted)} objects")
 
+        if deleted := msg.get("deleted_pointclouds"):
+            for name in deleted:
+                self._viz_delete(f"pointclouds/{name}")
+            if self._verbose:
+                log(f"[bridge] Deleted {len(deleted)} pointclouds")
+
         if robot_spheres := msg.get("robot_spheres"):
             t0 = time.perf_counter()
             self._set_robot_spheres(robot_spheres)
@@ -374,6 +423,12 @@ class MeshcatBridge:
             if self._verbose:
                 dt_ms = (time.perf_counter() - t0) * 1000.0
                 log(f"[bridge] Rendered {len(objects)} objects in {dt_ms:.1f} ms")
+        if clouds := msg.get("pointclouds"):
+            t0 = time.perf_counter()
+            self._set_pointclouds(clouds)
+            if self._verbose:
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                log(f"[bridge] Rendered {len(clouds)} pointclouds in {dt_ms:.1f} ms")
         if self._verbose:
             total_ms = (time.perf_counter() - t_start) * 1000.0
             log(f"[bridge] Message handled in {total_ms:.1f} ms")

@@ -6,14 +6,12 @@ from pathlib import Path
 from typing import List, Sequence, Tuple
 
 
-def find_srdf(catkin_src: Path, env: str) -> Path:
-    candidates = list(catkin_src.glob(f"**/{env}_moveit_config/config/*.srdf"))
-    if candidates:
-        return sorted(candidates)[0]
-    candidates = list(catkin_src.glob(f"**/{env}.srdf"))
-    if candidates:
-        return sorted(candidates)[0]
-    raise FileNotFoundError(f"Could not locate SRDF for env={env!r} under {catkin_src}")
+def find_repo_srdf(core_root: Path, env: str) -> Path:
+    srdf_dir = core_root / "config" / "srdf"
+    candidate = srdf_dir / f"{env}.srdf"
+    if candidate.is_file():
+        return candidate
+    raise FileNotFoundError(f"Could not locate SRDF for env={env!r} under {srdf_dir}")
 
 
 def plan_once(
@@ -67,13 +65,9 @@ def plan_once(
 def resolve_pose_sequence(args: argparse.Namespace) -> List[str]:
     if args.poses:
         seq = list(args.poses)
-    elif args.targets:
-        if not args.start:
-            raise SystemExit("Provide --start when using --targets")
-        seq = [args.start] + list(args.targets)
     else:
         if not args.start or not args.goal:
-            raise SystemExit("Provide --start and --goal (or use --poses ... or --targets ...)")
+            raise SystemExit("Provide --start and --goal (or use --poses ...)")
         seq = [args.start, args.goal]
 
     if len(seq) < 2:
@@ -88,7 +82,7 @@ def main() -> int:
     parser.add_argument("--vamp-environment", default="dual_gp4")
     parser.add_argument("--planner", choices=["composite_rrt", "cbs_prm"], default="composite_rrt")
     parser.add_argument("--planning-time", type=float, default=5.0)
-    parser.add_argument("--shortcut-time", type=float, default=0.1)
+    parser.add_argument("--shortcut-time", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--dt", type=float, default=0.1)
     parser.add_argument("--vmax", type=float, default=1.0)
@@ -96,11 +90,6 @@ def main() -> int:
     parser.add_argument("--roadmap-max-dist", type=float, default=2.0)
 
     parser.add_argument("--srdf", default="", help="Path to .srdf (auto-detected if empty)")
-    parser.add_argument(
-        "--catkin-src",
-        default="",
-        help="catkin_ws/src path (used for SRDF auto-detection; defaults to repo_root/..)",
-    )
 
     parser.add_argument("--move-group", default="", help="SRDF group that defines the named poses (default: env config)")
     parser.add_argument(
@@ -112,12 +101,6 @@ def main() -> int:
     parser.add_argument("--start", default="", help="SRDF group_state name (e.g. ready_pose)")
     parser.add_argument("--goal", default="", help="SRDF group_state name")
     parser.add_argument(
-        "--targets",
-        nargs="*",
-        default=[],
-        help="Sequence of goal named poses; plans sequentially from --start to each target.",
-    )
-    parser.add_argument(
         "--poses",
         nargs="*",
         default=[],
@@ -125,7 +108,7 @@ def main() -> int:
     )
 
     parser.add_argument("--output-dir", default="", help="Output directory (defaults under /tmp)")
-    parser.add_argument("--no-tpg", action="store_true", help="Skip building/writing tpg.pb")
+    parser.add_argument("--has-tpg", action="store_true", help="Build/write tpg.pb (default: off)")
 
     parser.add_argument("--meshcat", action="store_true")
     parser.add_argument("--meshcat-host", default="127.0.0.1")
@@ -150,11 +133,11 @@ def main() -> int:
         robot_groups = list(env_info["robot_groups"])
 
     core_root = Path(__file__).resolve().parents[2]
-    default_catkin_src = core_root.parent
-    if core_root.name == "mr_planner_core" and (core_root.parent / "mr_planner_lego").is_dir():
-        default_catkin_src = core_root.parent.parent
-    catkin_src = Path(args.catkin_src) if args.catkin_src else default_catkin_src
-    srdf_path = Path(args.srdf) if args.srdf else find_srdf(catkin_src, args.vamp_environment)
+    if args.srdf:
+        srdf_path = Path(args.srdf)
+    else:
+        srdf_path = find_repo_srdf(core_root, args.vamp_environment)
+    print("Loading SRDF from:", srdf_path)
 
     pose_sequence = resolve_pose_sequence(args)
     pose_pairs: Sequence[Tuple[str, str]] = list(zip(pose_sequence[:-1], pose_sequence[1:]))
@@ -186,7 +169,7 @@ def main() -> int:
             start_pose=start_pose,
             goal_pose=goal_pose,
             output_dir=out_dir,
-            write_tpg=(not args.no_tpg),
+            write_tpg=args.has_tpg,
         )
         results.append(res)
         solution_csvs.append(res["solution_csv"])
