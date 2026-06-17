@@ -11,9 +11,9 @@
 Chenrui Gao^,
 [Jiaoyang Li*](https://jiaoyangli.me/)<br>
 **Carnegie Mellon University*, *^University of Michigan*<br>
-Workshop for Multi-Agent Path Finding (WoMAPF) at AAAI 2026
+Accepted to the IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS) 2026
 
-<img src="docs/resources/vamp-kinova.gif" width="100%"/>
+<img src="docs/resources/iros-26.gif" width="100%"/>
 
 
 This codebase, VAMP-MR, is the collection of 
@@ -240,11 +240,10 @@ Outputs:
 If you found the research useful, please consider citing us in your research.
 
 ```bibtex
-@misc{vamp_mr_website,
+@inproceedings{huang2026vampmr,
   title        = {VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms},
   author       = {Huang, Philip and Gao, Chenrui and Li, Jiaoyang},
-  howpublished = {\url{https://github.com/vamp-mr/vamp-mr}},
-  note         = {AAAI 2026 Workshop on Multi-Agent Path Finding (WoMAPF), project website},
+  booktitle    = {IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
   year         = {2026}
 }
 ```
