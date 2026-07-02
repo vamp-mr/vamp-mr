@@ -211,7 +211,6 @@ bool RRTConnect::plan(const PlannerOptions &options) {
                     break;
                 }
             }
-            
         }
         extending_start_tree = !extending_start_tree; // Alternate between extending start and goal trees
     }
