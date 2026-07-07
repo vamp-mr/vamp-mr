@@ -1,4 +1,4 @@
 [submodule "vamp"]
 	path = vamp
-	url = ../../philip-huang/vamp.git
+	url = https://github.com/vamp-mr/vamp.git
 	branch = vamp-mr
