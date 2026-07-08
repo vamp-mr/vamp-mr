@@ -476,6 +476,9 @@ bool TPG::init(std::shared_ptr<PlanInstance> instance, const MRTrajectory &solut
 
 bool TPG::findCollisionDeps(std::shared_ptr<PlanInstance> instance, const MRTrajectory &solution,
     const TPGConfig &config) {
+    // Reusable pose-pair buffer for the O(N_i * N_j) type-2-edge sweep; avoids
+    // allocating a fresh 2-element vector per node pair.
+    std::vector<RobotPose> pair_scratch(2);
     for (int i = 0; i < num_robots_; i++) {
         for (int j = 0; j < num_robots_; j++) {
             if (i == j) {
@@ -486,8 +489,10 @@ bool TPG::findCollisionDeps(std::shared_ptr<PlanInstance> instance, const MRTraj
             while (node_i != nullptr) {
                 NodePtr node_j = node_j_start;
                 bool inCollision = false;
+                pair_scratch[0] = node_i->pose;
                 while (node_j != nullptr && node_j->timeStep < node_i->timeStep) {
-                    if (instance->checkCollision({node_i->pose, node_j->pose}, true)) {
+                    pair_scratch[1] = node_j->pose;
+                    if (instance->checkCollision(pair_scratch, true)) {
                         inCollision = true;
                     } else if (inCollision) {
                         inCollision = false;
@@ -601,8 +606,13 @@ bool TPG::findCollisionDepsParallel(std::shared_ptr<PlanInstance> instance, cons
                     
                     #pragma omp parallel for if(check_nodes.size() > 10)
                     for (int idx = 0; idx < check_nodes.size(); idx++) {
-                        collision_results[idx] = instance->checkCollision(
-                            {node_i->pose, check_nodes[idx]->pose}, true);
+                        // Per-thread reusable buffer: safe under nested OpenMP and
+                        // avoids a 2-element vector allocation per node pair.
+                        static thread_local std::vector<RobotPose> pair_scratch;
+                        pair_scratch.resize(2);
+                        pair_scratch[0] = node_i->pose;
+                        pair_scratch[1] = check_nodes[idx]->pose;
+                        collision_results[idx] = instance->checkCollision(pair_scratch, true);
                     }
                     
                     // Process results to identify collision transitions

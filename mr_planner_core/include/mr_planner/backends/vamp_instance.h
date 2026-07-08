@@ -2992,9 +2992,36 @@ bool VampInstance<RobotTs...>::connect(const RobotPose &a,
     {
         throw std::invalid_argument("VampInstance: connect requested between different robots");
     }
+    if (a.robot_id < 0 || a.robot_id >= static_cast<int>(kRobotCount))
+    {
+        throw std::out_of_range("VampInstance: robot id out of range");
+    }
 
     const double step_size = (col_step_size > 0.0) ? col_step_size : 0.1;
-    return !checkMultiRobotMotion({a}, {b}, step_size, self);
+
+    // Single-robot fast path mirroring checkMultiRobotMotion({a}, {b}, ...):
+    // build the pose arrays directly instead of materializing two temporary
+    // std::vector<RobotPose> copies per edge check (this is the planners'
+    // inner-loop edge validation).
+    PoseArray start_gathered{};
+    PoseArray goal_gathered{};
+    start_gathered.fill(nullptr);
+    goal_gathered.fill(nullptr);
+    const auto idx = static_cast<std::size_t>(a.robot_id);
+    start_gathered[idx] = &a;
+    goal_gathered[idx] = &b;
+
+    if (kRobotCount == 1)
+    {
+        return !checkMotionPack(
+            start_gathered,
+            goal_gathered,
+            step_size,
+            self,
+            std::make_index_sequence<kRobotCount>{});
+    }
+
+    return !subsetMotionSwitch(start_gathered, goal_gathered, &idx, 1, step_size, self);
 }
 
 template <typename... RobotTs>
