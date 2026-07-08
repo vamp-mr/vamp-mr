@@ -201,15 +201,15 @@ bool RRTConnect::plan(const PlannerOptions &options) {
                         break;
                     }
                 }
-            }
-            if(new_tree_b_vertex->pose == new_tree_a_vertex->pose) {
-                log("RRTConnect found a solution!", LogLevel::INFO);
-                if(extending_start_tree) {
-                    success = extractSolution(new_tree_a_vertex, new_tree_b_vertex);
-                } else {
-                    success = extractSolution(new_tree_b_vertex, new_tree_a_vertex);
+                if(new_tree_b_vertex->pose == new_tree_a_vertex->pose) {
+                    log("RRTConnect found a solution!", LogLevel::INFO);
+                    if(extending_start_tree) {
+                        success = extractSolution(new_tree_a_vertex, new_tree_b_vertex);
+                    } else {
+                        success = extractSolution(new_tree_b_vertex, new_tree_a_vertex);
+                    }
+                    break;
                 }
-                break;
             }
         }
         extending_start_tree = !extending_start_tree; // Alternate between extending start and goal trees
