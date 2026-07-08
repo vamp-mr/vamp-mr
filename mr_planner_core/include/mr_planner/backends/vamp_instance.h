@@ -663,11 +663,12 @@ private:
     template <std::size_t Index>
     void rebuildCollisionFilterForRobot();
 
-    bool subsetCollisionSwitch(const PoseArray &poses, const std::vector<std::size_t> &active, bool self) const;
+    bool subsetCollisionSwitch(const PoseArray &poses, const std::size_t *active, std::size_t n_active, bool self) const;
     // Dispatches to the appropriate SIMD path and returns true if any waypoint collides.
     bool subsetMotionSwitch(const PoseArray &start,
                             const PoseArray &goal,
-                            const std::vector<std::size_t> &active,
+                            const std::size_t *active,
+                            std::size_t n_active,
                             double step_size,
                             bool self);
 
@@ -2161,20 +2162,21 @@ bool VampInstance<RobotTs...>::fkccMultiAllWithAttachmentAllowances(
 
 template <typename... RobotTs>
 bool VampInstance<RobotTs...>::subsetCollisionSwitch(const PoseArray &poses,
-                                                     const std::vector<std::size_t> &active,
+                                                     const std::size_t *active,
+                                                     std::size_t n_active,
                                                      bool self) const
 {
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no robot poses provided");
     }
 
-    if (active.size() == kRobotCount)
+    if (n_active == kRobotCount)
     {
         throw std::logic_error("VampInstance: subsetCollisionSwitch should not handle full robot set");
     }
 
-    if (active.size() == 1)
+    if (n_active == 1)
     {
         const std::size_t idx = active[0];
         if (idx >= kRobotCount)
@@ -2189,7 +2191,7 @@ bool VampInstance<RobotTs...>::subsetCollisionSwitch(const PoseArray &poses,
         return fn(*this, poses, self);
     }
 
-    if (active.size() == 2)
+    if (n_active == 2)
     {
         std::size_t a = active[0];
         std::size_t b = active[1];
@@ -2220,21 +2222,19 @@ bool VampInstance<RobotTs...>::subsetCollisionSwitch(const PoseArray &poses,
 template <typename... RobotTs>
 bool VampInstance<RobotTs...>::subsetMotionSwitch(const PoseArray &start,
                                                   const PoseArray &goal,
-                                                  const std::vector<std::size_t> &active,
+                                                  const std::size_t *active,
+                                                  std::size_t n_active,
                                                   double step_size,
                                                   bool self)
 {
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no robot poses provided");
     }
 
-    auto sorted = active;
-   std::sort(sorted.begin(), sorted.end());
-
-    if (sorted.size() == 1)
+    if (n_active == 1)
     {
-        const std::size_t idx = sorted[0];
+        const std::size_t idx = active[0];
         if (idx >= kRobotCount)
         {
             throw std::out_of_range("VampInstance: robot index out of range");
@@ -2247,10 +2247,11 @@ bool VampInstance<RobotTs...>::subsetMotionSwitch(const PoseArray &start,
         return fn(*this, start, goal, step_size, self);
     }
 
-    if (sorted.size() == 2)
+    if (n_active == 2)
     {
-        const std::size_t a = sorted[0];
-        const std::size_t b = sorted[1];
+        // Only pairs are supported, so ordering reduces to a conditional swap.
+        const std::size_t a = std::min(active[0], active[1]);
+        const std::size_t b = std::max(active[0], active[1]);
         if (a == b || b >= kRobotCount)
         {
             throw std::invalid_argument("VampInstance: invalid robot pair selection");
@@ -2295,29 +2296,31 @@ bool VampInstance<RobotTs...>::checkCollision(const std::vector<RobotPose> &pose
 
     PoseArray gathered = gatherPoses(poses, true);
 
-    std::vector<std::size_t> active;
-    active.reserve(kRobotCount);
+    // Stack storage: this is the hottest call in the system, so avoid a heap
+    // allocation per collision check.
+    std::array<std::size_t, kRobotCount> active;
+    std::size_t n_active = 0;
     for (std::size_t idx = 0; idx < kRobotCount; ++idx)
     {
         if (gathered[idx] != nullptr)
         {
-            active.push_back(idx);
+            active[n_active++] = idx;
         }
     }
 
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no valid robot pose indices supplied");
     }
 
     bool is_collision_free = false;
-    if (active.size() == kRobotCount)
+    if (n_active == kRobotCount)
     {
         is_collision_free = checkCollisionPack(gathered, self, std::make_index_sequence<kRobotCount>{});
     }
     else
     {
-        is_collision_free = subsetCollisionSwitch(gathered, active, self);
+        is_collision_free = subsetCollisionSwitch(gathered, active.data(), n_active, self);
         ++num_collision_checks_;
     }
 
@@ -2718,8 +2721,9 @@ bool VampInstance<RobotTs...>::checkMultiRobotMotion(const std::vector<RobotPose
     auto start_gathered = gatherPoses(start, true);
     auto goal_gathered = gatherPoses(goal, true);
 
-    std::vector<std::size_t> active;
-    active.reserve(kRobotCount);
+    // Stack storage: this runs per edge check inside the planners' inner loops.
+    std::array<std::size_t, kRobotCount> active;
+    std::size_t n_active = 0;
     for (std::size_t idx = 0; idx < kRobotCount; ++idx)
     {
         const bool have_start = start_gathered[idx] != nullptr;
@@ -2732,16 +2736,16 @@ bool VampInstance<RobotTs...>::checkMultiRobotMotion(const std::vector<RobotPose
 
         if (have_start)
         {
-            active.push_back(idx);
+            active[n_active++] = idx;
         }
     }
 
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no robot poses provided for motion check");
     }
 
-    if (active.size() == kRobotCount)
+    if (n_active == kRobotCount)
     {
         return checkMotionPack(
             start_gathered,
@@ -2751,7 +2755,7 @@ bool VampInstance<RobotTs...>::checkMultiRobotMotion(const std::vector<RobotPose
             std::make_index_sequence<kRobotCount>{});
     }
 
-    return subsetMotionSwitch(start_gathered, goal_gathered, active, step_size, self);
+    return subsetMotionSwitch(start_gathered, goal_gathered, active.data(), n_active, step_size, self);
 }
 
 template <typename... RobotTs>

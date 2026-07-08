@@ -74,6 +74,11 @@ private:
     MRTrajectory obstacles_;
     std::vector<std::vector<RobotPose>> obs_poses_; // robot X span_steps
 
+    // Reusable {robot pose, obstacle pose} buffer for the per-timestep collision
+    // checks; avoids allocating a fresh 2-element vector in the inner loops.
+    // (SIPP_RRT is single-threaded; mutable so const methods can reuse it.)
+    mutable std::vector<RobotPose> cc_pair_scratch_;
+
     // random number generator
     std::mt19937 rng_;
 

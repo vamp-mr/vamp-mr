@@ -191,10 +191,11 @@ bool ShortcutterMT::shortcutSolution(const MRTrajectory &solution,
         // keep the same number of points, just change the time if robot is not all moving at max speed
         int step = 0;
         int makespan_count = std::ceil(makespan_ / options_.dt) + 1;
+        const int num_robots = instance_->getNumberOfRobots();
         while (step < makespan_count) {
             double timeDilation = 1;
             if (step > 0) {
-                for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+                for (int i = 0; i < num_robots; i++) {
                     int ind_prev = timed_index_[i][step-1];
                     int ind = timed_index_[i][step];
                     double dist = std::abs(instance_->computeDistance(synced_plan_[i].trajectory[ind], synced_plan_[i].trajectory[ind_prev]));
@@ -204,7 +205,7 @@ bool ShortcutterMT::shortcutSolution(const MRTrajectory &solution,
             }
 
             // append the point to speedup_traj
-            for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+            for (int i = 0; i < num_robots; i++) {
                 int ind = timed_index_[i][step];
                 speedup_traj[i].trajectory.push_back(synced_plan_[i].trajectory[ind]);
                 if (step > 0) {
@@ -219,7 +220,7 @@ bool ShortcutterMT::shortcutSolution(const MRTrajectory &solution,
             step ++;
         }
         double speedup_makespan = 0;
-        for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+        for (int i = 0; i < num_robots; i++) {
             speedup_traj[i].robot_id = i;
             speedup_traj[i].cost = speedup_traj[i].times.back();
             speedup_makespan = std::max(speedup_makespan, speedup_traj[i].times.back());
@@ -383,8 +384,7 @@ bool ShortcutterMT::checkTaskDep()
 {
     int num_robot = instance_->getNumberOfRobots();
 
-    
-    for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+    for (int i = 0; i < num_robot; i++) {
         int num_act = act_graph_->num_activities(i);
         int act_start_ind = 0;
         for (int act_id = 0; act_id < num_act; act_id++) {
@@ -568,14 +568,16 @@ void ShortcutterMT::updateScene(int robot_id, int act_id) {
 
 double ShortcutterMT::calculate_makespan() {
     double makespan = 0;
-    for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+    const int num_robots = instance_->getNumberOfRobots();
+    for (int i = 0; i < num_robots; i++) {
         makespan = std::max(makespan, synced_plan_[i].times.back());
     }
     return makespan;
 }
 
 void ShortcutterMT::prempt_home_act() {
-    for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+    const int num_robots = instance_->getNumberOfRobots();
+    for (int i = 0; i < num_robots; i++) {
 
         std::map<int, int> update_act_id;
         
@@ -599,13 +601,14 @@ void ShortcutterMT::prempt_home_act() {
     }
 }
 void ShortcutterMT::update_timed_index() {
+    const int num_robots = instance_->getNumberOfRobots();
     timed_index_.clear();
-    timed_index_.resize(instance_->getNumberOfRobots());
-   
+    timed_index_.resize(num_robots);
+
     makespan_ = calculate_makespan();
     int makespan_count = std::ceil(makespan_ / options_.dt) + 1;
 
-    for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+    for (int i = 0; i < num_robots; i++) {
         int step = 0; 
         int j = 0;
         while (step < makespan_count) {

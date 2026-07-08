@@ -261,18 +261,17 @@ void PRM::buildRoadmap(const PlannerOptions &options) {
     max_dist_ = options.max_dist;
     num_samples_ = options.num_samples;
     roadmap_ = std::make_shared<Graph>();
-    std::vector<std::shared_ptr<Vertex>> neighbors;
 
     //add vertices and edges
     RobotPose newpose = instance_->initRobotPose(robot_id_);
     while (roadmap_->size < num_samples_ - 2) {
         if (instance_->sample(newpose)) {
-            
+
             auto sample = roadmap_->addVertex(newpose);
-            neighbors.clear();
-            neighbors = roadmap_->vertices;
-            
-            for (auto neighbor: neighbors) {
+            // Iterate the vertex list directly (addEdge only mutates adjacency,
+            // never the vertex vector). The self-pair is rejected by pose equality
+            // inside validateMotion.
+            for (const auto &neighbor : roadmap_->vertices) {
                 if (validateMotion(sample, neighbor)) {
                     roadmap_->addEdge(sample, neighbor);
                 }
@@ -709,13 +708,13 @@ void PRM::swapStartGoal() {
 bool PRM::checkIsMakeSpan(const PlannerOptions &options) {
     bool isMakeSpan = true;
     double this_cost = 0;
-    for(auto other_solution : other_solutions_) {
+    for(const auto &other_solution : other_solutions_) {
         if(other_solution.robot_id == robot_id_) {
             this_cost = other_solution.times.back();
             break;
         }
     }
-    for(auto other_solution : other_solutions_) {
+    for(const auto &other_solution : other_solutions_) {
         if(other_solution.robot_id == robot_id_) {
             continue;
         }
@@ -732,7 +731,7 @@ void PRM::findCostRange(const PlannerOptions &options, double &minCost, double &
     double min_cost = -1;
     double max_cost = std::numeric_limits<double>::max();
     staticCostThresh = 0;
-    for(auto constraint : options.constraints) {
+    for(const auto &constraint : options.constraints) {
         if(constraint.robot_id != robot_id_) {
             continue;
         }
@@ -756,7 +755,7 @@ void PRM::findCostRange(const PlannerOptions &options, double &minCost, double &
 
 bool PRM::checkConstraints(const AStarNode &current, const PlannerOptions &options, bool isMakeSpan) {
     bool valid = true;
-    for (auto constraint : options.constraints) {
+    for (const auto &constraint : options.constraints) {
         if (constraint.robot_id != robot_id_ && constraint.type != ConstraintType::LEQLENGTH) {
             continue;
         }

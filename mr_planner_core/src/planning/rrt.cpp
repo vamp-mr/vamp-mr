@@ -175,8 +175,9 @@ bool RRTPlanner::reachedGoal(const std::shared_ptr<Vertex> &vertex, const Planne
 }
 
 bool RRTPlanner::validateMotion(const std::shared_ptr<Vertex> &a, const std::shared_ptr<Vertex> &b, const PlannerOptions &options) {
-    return !(a->pose == b->pose) 
-            && (std::find(tree_.begin(), tree_.end(), b) == tree_.end()) 
+    // b always comes fresh from steer(), so it can never already be a tree member;
+    // no membership scan is needed here.
+    return !(a->pose == b->pose)
             && !checkStepCollision(a, b)
             && checkConstraint(a, b, options);
 }
@@ -187,7 +188,7 @@ bool RRTPlanner::checkStepCollision(const std::shared_ptr<Vertex> &a, const std:
 
 bool RRTPlanner::checkConstraint(const std::shared_ptr<Vertex> &a, const std::shared_ptr<Vertex> &b, const PlannerOptions &options) {
     bool valid = true;
-    for(auto constraint : options.constraints) {
+    for(const auto &constraint : options.constraints) {
         if(constraint.robot_id != robot_id_) {
             continue; // Skip constraints for other robots
         }

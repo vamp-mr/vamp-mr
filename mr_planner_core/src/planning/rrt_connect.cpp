@@ -421,16 +421,14 @@ bool RRTConnect::checkStepCollision(const std::shared_ptr<Vertex> &a, const std:
 }
 
 bool RRTConnect::validateMotion(const std::shared_ptr<Vertex> &a, const std::shared_ptr<Vertex> &b, const PlannerOptions &options, bool extending_start_tree) {
+    // b always comes fresh from steer(), so it can never already be a tree member;
+    // no membership scan is needed here.
     if(extending_start_tree)
-        return !(a->pose == b->pose) 
-            && (std::find(start_tree_.begin(), start_tree_.end(), b) == start_tree_.end() 
-            && std::find(goal_tree_.begin(), goal_tree_.end(), b) == goal_tree_.end())
+        return !(a->pose == b->pose)
             && !checkStepCollision(a, b, options)
             && checkConstraint(a, b, options);
     else
-        return !(a->pose == b->pose) 
-            && (std::find(goal_tree_.begin(), goal_tree_.end(), b) == goal_tree_.end() 
-            && std::find(start_tree_.begin(), start_tree_.end(), b) == start_tree_.end())
+        return !(a->pose == b->pose)
             && !checkStepCollision(b, a, options)
             && checkConstraint(b, a, options);
 }
@@ -438,7 +436,7 @@ bool RRTConnect::validateMotion(const std::shared_ptr<Vertex> &a, const std::sha
 // NOTE: For goal tree, the vertex a should be the new vertex and b should be the nearest vertex in the goal tree
 bool RRTConnect::checkConstraint(const std::shared_ptr<Vertex> &a, const std::shared_ptr<Vertex> &b, const PlannerOptions &options) {
     bool valid = true;
-    for(auto constraint : options.constraints) {
+    for(const auto &constraint : options.constraints) {
         if(constraint.robot_id != robot_id_) {
             continue; // Skip constraints for other robots
         }

@@ -843,10 +843,11 @@ void Shortcutter::preCheckShortcut(Shortcut &shortcut) {
     int b = shortcut.b;
     int r_id = shortcut.robot_id;
     if (shortcut.comp_shortcut) {
+        const int num_robots = instance_->getNumberOfRobots();
         std::vector<double> time_ab;
         std::vector<RobotPose> poses_a, poses_b;
         int dof_s = 0;
-        for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+        for (int i = 0; i < num_robots; i++) {
             RobotPose pose_a = plan_[i].trajectory[a];
             RobotPose pose_b = plan_[i].trajectory[b];
             
@@ -868,8 +869,9 @@ void Shortcutter::preCheckShortcut(Shortcut &shortcut) {
         for (int c = 1; c < num_steps; c++) {
             double alpha = c * 1.0 / num_steps;
             std::vector<RobotPose> poses;
+            poses.reserve(num_robots);
 
-            for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+            for (int i = 0; i < num_robots; i++) {
                 RobotPose pose_i = instance_->interpolate(poses_a[i], poses_b[i], alpha);
                 poses.push_back(pose_i);
             }
@@ -1156,7 +1158,8 @@ void Shortcutter::updatePlan(const Shortcut &shortcut) {
 
 double Shortcutter::calculate_makespan(const MRTrajectory &plan) {
     double makespan = 0;
-    for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+    const int num_robots = instance_->getNumberOfRobots();
+    for (int i = 0; i < num_robots; i++) {
         makespan = std::max(makespan, plan[i].times.back());
     }
     return makespan;
@@ -1164,7 +1167,8 @@ double Shortcutter::calculate_makespan(const MRTrajectory &plan) {
 
 double Shortcutter::calculate_flowtime(const MRTrajectory &plan) {
     double flowtime = 0;
-    for (int i = 0; i < instance_->getNumberOfRobots(); i++) {
+    const int num_robots = instance_->getNumberOfRobots();
+    for (int i = 0; i < num_robots; i++) {
         for (int j = plan[i].trajectory.size() - 1; j >= 1; j--) {
             if (instance_->computeDistance(plan[i].trajectory[j], plan[i].trajectory[j-1]) > 1e-5) {
                 flowtime += plan[i].times[j];
