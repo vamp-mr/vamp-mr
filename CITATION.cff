@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use VAMP-MR in your research, please cite the following paper."
+title: "VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms"
+authors:
+  - family-names: Huang
+    given-names: Philip
+    affiliation: Carnegie Mellon University
+  - family-names: Gao
+    given-names: Chenrui
+    affiliation: University of Michigan
+  - family-names: Li
+    given-names: Jiaoyang
+    affiliation: Carnegie Mellon University
+url: "https://vamp-mr.github.io/vamp-mr/"
+repository-code: "https://github.com/vamp-mr/vamp-mr"
+license: Apache-2.0
+preferred-citation:
+  type: conference-paper
+  title: "VAMP-MR: Vector-Accelerated Motion Planning and Execution for Multi-Robot-Arms"
+  authors:
+    - family-names: Huang
+      given-names: Philip
+    - family-names: Gao
+      given-names: Chenrui
+    - family-names: Li
+      given-names: Jiaoyang
+  collection-title: "IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)"
+  year: 2026

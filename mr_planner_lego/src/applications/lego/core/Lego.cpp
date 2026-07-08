@@ -1,3 +1,7 @@
+// This file is derived from APEX-MR (https://github.com/intelligent-control-lab/APEX-MR),
+// Copyright (c) 2025 Intelligent Control Lab, licensed under the MIT License.
+// See THIRD_PARTY_LICENSES.md for the full license text.
+// Modifications for VAMP-MR: ROS-free integration with the mr_planner_core planning engine.
 #include "mr_planner/applications/lego/lego/Lego.hpp"
 #include <algorithm>
 #include <cctype>
