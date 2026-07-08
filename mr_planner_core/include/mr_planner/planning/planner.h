@@ -28,9 +28,7 @@ public:
     // Perform the planning process
     virtual bool plan(const PlannerOptions &options) = 0;
 
-    // Retrieve the plan (if needed, depending on your design, this could return a path, a series of actions, etc.)
-    // For simplicity, this could return a boolean indicating success for now,
-    // but you might want to define a more complex structure for the plan itself.
+    // Retrieve the resulting plan; returns true on success.
     virtual bool getPlan(MRTrajectory &solution) const = 0;
 
     virtual ~AbstractPlanner() = default;

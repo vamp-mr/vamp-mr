@@ -7,7 +7,13 @@
 #include <optional>
 #include <set>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include "mr_planner/planning/pose_hash.h"
+
+// Defined in logger.cpp. Declared here (rather than including logger.h) to avoid
+// the instance.h <-> logger.h include cycle, since instance.h includes this header.
+void logVoxelGridWarn(const std::string& message);
 
 #include <boost/serialization/vector.hpp>
 #include <boost/serialization/unordered_map.hpp>
@@ -79,12 +85,16 @@ public:
     int getVoxelId(const Eigen::Vector3d& point) const {
         Eigen::Vector3i idx = ((point - min_bound_) / resolution_ - Eigen::Vector3d(0.5, 0.5, 0.5)).cast<int>();
         if ((idx.array() < 0).any() || (idx.array() >= size_.array()).any()) {
-            std::cout << "Point out of bounds: " << point.transpose() << std::endl;
+            std::ostringstream oss;
+            oss << "Point out of bounds: " << point.transpose();
+            logVoxelGridWarn(oss.str());
             return -1;
         }
         auto it = index_map_.find(idx);
         if(it == index_map_.end()) {
-            std::cout << "Voxel not found for point: " << point.transpose() << std::endl;
+            std::ostringstream oss;
+            oss << "Voxel not found for point: " << point.transpose();
+            logVoxelGridWarn(oss.str());
             return -1;
         }
         return it->second;
@@ -101,10 +111,9 @@ public:
     std::vector<int> queryPoseOccupiedVoxels(const RobotPose& pose) const {
         auto it = vertex_occupied_voxels_map_.find(pose);
         if (it != vertex_occupied_voxels_map_.end()) {
-            // std::cout << "Pose found in voxel occupancy map!\n";
             return it->second;
         }
-        std::cout << "Pose not registered in voxel occupancy map!\n";
+        logVoxelGridWarn("Pose not registered in voxel occupancy map!");
         return all_indices;
     }
 

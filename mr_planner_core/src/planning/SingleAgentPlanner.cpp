@@ -16,11 +16,7 @@ STRRT::STRRT(std::shared_ptr<PlanInstance> instance, int robot_id)
 bool STRRT::init(const PlannerOptions &options) { 
     // initialize two trees, one for the start and one for the goal
     start_pose_ = instance_->getStartPose(robot_id_);
-    std::cout << "Start pose: " << start_pose_.joint_values[0] << " " << start_pose_.joint_values[1] << " " << start_pose_.joint_values[2] 
-        << " " << start_pose_.joint_values[3] << " " << start_pose_.joint_values[4] << " " << start_pose_.joint_values[5] << std::endl;
     goal_pose_ = instance_->getGoalPose(robot_id_);
-    std::cout << "Goal pose: " << goal_pose_.joint_values[0] << " " << goal_pose_.joint_values[1] << " " << goal_pose_.joint_values[2] << " " 
-        << goal_pose_.joint_values[3] << " " << goal_pose_.joint_values[4] << " " << goal_pose_.joint_values[5] << std::endl;
 
     auto startVertex = std::make_shared<Vertex>(start_pose_);
     startVertex->setTime(0.0);
@@ -123,11 +119,6 @@ bool STRRT::plan(const PlannerOptions &options) {
         }
         std::reverse(solution_.times.begin(), solution_.times.end());
         std::reverse(solution_.trajectory.begin(), solution_.trajectory.end());
-
-        std::cout << "Planned start pose: " << solution_.trajectory[0].joint_values[0] << " " << solution_.trajectory[0].joint_values[1] << " " << solution_.trajectory[0].joint_values[2] 
-                    << " " << solution_.trajectory[0].joint_values[3] << " " << solution_.trajectory[0].joint_values[4] << " " << solution_.trajectory[0].joint_values[5] << std::endl;
-        std::cout << "Planned goal pose: " << solution_.trajectory[solution_.trajectory.size() - 1].joint_values[0] << " " << solution_.trajectory[solution_.trajectory.size() - 1].joint_values[1] << " " << solution_.trajectory[solution_.trajectory.size() - 1].joint_values[2] 
-                    << " " << solution_.trajectory[solution_.trajectory.size() - 1].joint_values[3] << " " << solution_.trajectory[solution_.trajectory.size() - 1].joint_values[4] << " " << solution_.trajectory[solution_.trajectory.size() - 1].joint_values[5] << std::endl;
 
         for (int i = 0; i < solution_.times.size(); i++) {
             log(solution_.trajectory[i], LogLevel::DEBUG);

@@ -18,6 +18,7 @@
 #endif
 
 #include <mr_planner/core/instance.h>
+#include <mr_planner/core/logger.h>
 
 #include <vamp/collision/environment.hh>
 #include <vamp/collision/attachments.hh>
@@ -39,6 +40,7 @@
 #include <optional>
 #include <new>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -2051,9 +2053,10 @@ bool VampInstance<RobotTs...>::attachmentRobotCollidesWithRobotSpheres(
             {
                 if (std::string(dbg) == "1")
                 {
-                    std::cerr << "[VampInstance] attachment collision blocked between robot "
-                              << AttachmentRobotIndex << " attachment and " << other_robot_name << "::"
-                              << other_link_name << " (allowed entries=" << allowed.size() << ")\n";
+                    log("[VampInstance] attachment collision blocked between robot " +
+                            std::to_string(AttachmentRobotIndex) + " attachment and " + other_robot_name +
+                            "::" + other_link_name + " (allowed entries=" + std::to_string(allowed.size()) + ")",
+                        LogLevel::WARN);
                 }
             }
             return true;
@@ -3863,51 +3866,52 @@ template <typename... RobotTs>
 void VampInstance<RobotTs...>::printKnownObjects() const
 {
     std::lock_guard<std::mutex> lock(objects_mutex_);
-    std::cout << "[VAMP] Robots:" << std::endl;
+    std::ostringstream oss;
+    oss << "[VAMP] Robots:" << "\n";
     for (std::size_t i = 0; i < robot_shadow_.size(); ++i)
     {
-        std::cout << "  [" << i << "] ";
+        oss << "  [" << i << "] ";
         if (i < robot_names_.size())
         {
-            std::cout << robot_names_[i];
+            oss << robot_names_[i];
         }
         else
         {
-            std::cout << "robot_" << i;
+            oss << "robot_" << i;
         }
 
         const RobotPose &pose = robot_shadow_[i];
         if (pose.joint_values.empty() && pose.hand_values.empty())
         {
-            std::cout << " (pose not set)" << std::endl;
+            oss << " (pose not set)" << "\n";
             continue;
         }
 
-        std::cout << " joints=[";
+        oss << " joints=[";
         for (std::size_t j = 0; j < pose.joint_values.size(); ++j)
         {
             if (j > 0U)
             {
-                std::cout << ", ";
+                oss << ", ";
             }
-            std::cout << pose.joint_values[j];
+            oss << pose.joint_values[j];
         }
-        std::cout << "]";
+        oss << "]";
 
         if (!pose.hand_values.empty())
         {
-            std::cout << " hand=[";
+            oss << " hand=[";
             for (std::size_t j = 0; j < pose.hand_values.size(); ++j)
             {
                 if (j > 0U)
                 {
-                    std::cout << ", ";
+                    oss << ", ";
                 }
-                std::cout << pose.hand_values[j];
+                oss << pose.hand_values[j];
             }
-            std::cout << "]";
+            oss << "]";
         }
-        std::cout << std::endl;
+        oss << "\n";
     }
 
     auto print_object_pose = [&](const Object &obj, const std::string &indent) {
@@ -3918,26 +3922,26 @@ void VampInstance<RobotTs...>::printKnownObjects() const
         {
             q.normalize();
         }
-        std::cout << indent << obj.name << " pos=("
-                  << t.x() << ", " << t.y() << ", " << t.z()
-                  << ") quat=(" << q.x() << ", " << q.y() << ", " << q.z() << ", " << q.w() << ")";
+        oss << indent << obj.name << " pos=("
+            << t.x() << ", " << t.y() << ", " << t.z()
+            << ") quat=(" << q.x() << ", " << q.y() << ", " << q.z() << ", " << q.w() << ")";
     };
 
     auto print_object_size = [&](const Object &obj) {
         switch (obj.shape)
         {
         case Object::Shape::Box:
-            std::cout << " size=(" << obj.length << ", " << obj.width << ", " << obj.height << ")";
+            oss << " size=(" << obj.length << ", " << obj.width << ", " << obj.height << ")";
             break;
         case Object::Shape::Cylinder:
-            std::cout << " radius=" << obj.radius << " length=" << obj.length;
+            oss << " radius=" << obj.radius << " length=" << obj.length;
             break;
         default:
             break;
         }
     };
 
-    std::cout << "[VAMP] Movable objects:" << std::endl;
+    oss << "[VAMP] Movable objects:" << "\n";
     for (const auto &name : movable_objects_)
     {
         const auto it = objects_.find(name);
@@ -3945,13 +3949,13 @@ void VampInstance<RobotTs...>::printKnownObjects() const
         {
             continue;
         }
-        std::cout << "  ";
+        oss << "  ";
         print_object_pose(it->second, "");
         print_object_size(it->second);
-        std::cout << " state=" << static_cast<int>(it->second.state) << std::endl;
+        oss << " state=" << static_cast<int>(it->second.state) << "\n";
     }
 
-    std::cout << "[VAMP] Attached objects:" << std::endl;
+    oss << "[VAMP] Attached objects:" << "\n";
     for (const auto &kv : objects_)
     {
         const Object &obj = kv.second;
@@ -3964,11 +3968,12 @@ void VampInstance<RobotTs...>::printKnownObjects() const
         const std::string robot_label = has_robot_name ?
                                             robot_names_[static_cast<std::size_t>(obj.robot_id)] :
                                             std::string("robot_") + std::to_string(obj.robot_id);
-        std::cout << "  ";
+        oss << "  ";
         print_object_pose(obj, "");
         print_object_size(obj);
-        std::cout << " attached_to=" << robot_label << " link=" << obj.parent_link << std::endl;
+        oss << " attached_to=" << robot_label << " link=" << obj.parent_link << "\n";
     }
+    log(oss.str(), LogLevel::DEBUG);
 }
 
 template <typename... RobotTs>
@@ -4255,8 +4260,8 @@ void VampInstance<RobotTs...>::publishMeshcatScene()
     {
         const auto robot_count = msg["robot_spheres"].size();
         const auto obj_count = msg.isMember("objects") ? msg["objects"].size() : 0U;
-        std::cerr << "[meshcat] publishScene robots=" << robot_count
-                  << " objects=" << obj_count << std::endl;
+        log("[meshcat] publishScene robots=" + std::to_string(robot_count) +
+                " objects=" + std::to_string(obj_count), LogLevel::DEBUG);
     }
     sendMeshcatJson(msg);
     meshcat_dirty_ = false;
@@ -4304,12 +4309,12 @@ void VampInstance<RobotTs...>::connectMeshcat()
             meshcat_dirty_objects_.clear();
             meshcat_deleted_objects_.clear();
         }
-        std::cerr << "[meshcat] connected to " << meshcat_options_.host << ":" << meshcat_options_.port << std::endl;
+        log("[meshcat] connected to " + meshcat_options_.host + ":" + std::to_string(meshcat_options_.port), LogLevel::DEBUG);
     }
     catch (const std::exception &ex)
     {
         meshcat_connected_ = false;
-        std::cerr << "[meshcat] connection failed: " << ex.what() << std::endl;
+        log(std::string("[meshcat] connection failed: ") + ex.what(), LogLevel::DEBUG);
     }
 }
 
@@ -4432,13 +4437,13 @@ void VampInstance<RobotTs...>::runMeshcatWorker()
             boost::asio::write(meshcat_socket_, boost::asio::buffer(payload.data(), payload.size()));
             if (meshcat_debug_)
             {
-                std::cerr << "[meshcat] sent " << payload.size() << " bytes (async)\n";
+                log("[meshcat] sent " + std::to_string(payload.size()) + " bytes (async)", LogLevel::DEBUG);
             }
         }
         catch (const std::exception &ex)
         {
             meshcat_connected_ = false;
-            std::cerr << "[meshcat] async send failed: " << ex.what() << std::endl;
+            log(std::string("[meshcat] async send failed: ") + ex.what(), LogLevel::DEBUG);
         }
     }
 }

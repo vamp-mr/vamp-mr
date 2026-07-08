@@ -28,7 +28,7 @@ bool RRTPlanner::plan(const PlannerOptions &options) {
         solution_.times.push_back(0.0);
         solution_.trajectory.push_back(goal_pose_);
         solution_.cost = 0.0;
-        std::cout << "Failed to initialize RRT" << std::endl;
+        log("Failed to initialize RRT", LogLevel::WARN);
         return false;
     }
     start_time_ = std::chrono::system_clock::now();
@@ -37,13 +37,13 @@ bool RRTPlanner::plan(const PlannerOptions &options) {
         auto current_time = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed_time = current_time - start_time_;
         if (elapsed_time.count() > max_planning_time_) {
-            std::cout << "RRT time limit exceeded!\n";
+            log("RRT time limit exceeded", LogLevel::INFO);
             break;
         }
 
         RobotPose random_sample;
         if (!randomSample(random_sample)) {
-            std::cout << "Failed to sample a random pose" << std::endl;
+            log("Failed to sample a random pose", LogLevel::INFO);
             break;
         }
         auto new_sample = std::make_shared<Vertex>(random_sample);
@@ -76,7 +76,7 @@ bool RRTPlanner::plan(const PlannerOptions &options) {
             std::reverse(solution_.times.begin(), solution_.times.end());
             std::reverse(solution_.trajectory.begin(), solution_.trajectory.end());
             solution_.cost = new_vertex->time;
-            std::cout << "RRT found a solution!" << std::endl;
+            log("RRT found a solution", LogLevel::INFO);
             success = true;
             break;
         }
@@ -92,7 +92,7 @@ bool RRTPlanner::plan(const PlannerOptions &options, const MRTrajectory &other_s
         solution_.times.push_back(0.0);
         solution_.trajectory.push_back(goal_pose_);
         solution_.cost = 0.0;
-        std::cout << "Failed to initialize RRT" << std::endl;
+        log("Failed to initialize RRT", LogLevel::WARN);
         return false;
     }
     other_solutions_ = other_solutions;

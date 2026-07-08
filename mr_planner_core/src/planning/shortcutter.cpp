@@ -777,7 +777,6 @@ bool Shortcutter::shortcutSolution(const MRTrajectory &solution,
             auto tic_inner = std::chrono::high_resolution_clock::now();
             checkShortcut(shortcut);
             auto inner = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - tic_inner).count();
-            // std::cout << "Inner check time: " << inner * 1e-9 << " seconds." << std::endl;
             t_check_ += (inner * 1e-9);
             n_check_++;
             n_colcheck_ += instance_->numCollisionChecks();

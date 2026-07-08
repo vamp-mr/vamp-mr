@@ -438,7 +438,6 @@ void ShortcutterMT::checkShortcut(Shortcut &shortcut)
     std::vector<ObjPtr> indep_objs = act_graph_->find_indep_obj(cur_act);
     for (auto obj : indep_objs) {
         instance_->addMoveableObject(obj->obj);
-        //instance->updateScene();
     }
 
     for (int act_id = 0; act_id <= cur_act->act_id; act_id++) {
@@ -550,21 +549,16 @@ void ShortcutterMT::updateScene(int robot_id, int act_id) {
         instance_->moveRobot(robot_id, act_j->start_pose);
         if (obj->vanish) {
             instance_->addMoveableObject(obj->obj);
-            //instance->updateScene();
         }
         else {
             instance_->moveObject(obj->obj);
-            //instance->updateScene();
         }
         instance_->attachObjectToRobot(obj->obj.name, robot_id, obj->next_attach_link, act_j->start_pose);
-        //instance->updateScene();
     }
     for (auto obj : act_j->obj_detached) {
         instance_->detachObjectFromRobot(obj->obj.name, act_j->start_pose);
-        //instance->updateScene();
         if (obj->vanish) {
             instance_->removeObject(obj->obj.name);
-            //instance->updateScene();
         }
     }
     for (auto col_node : act_j->collision_nodes) {

@@ -15,7 +15,7 @@
 #define DEG2RAD(angle) (static_cast<double>(angle)*M_PI/180.0)
 #define RAD2DEG(angle) (static_cast<double>(angle)/M_PI*180.0)
 
-#define N_JOINTS 6 // ruic: for now 6 joints
+#define N_JOINTS 6 // assumes 6-DOF arms
 
 namespace lego_manipulation
 {

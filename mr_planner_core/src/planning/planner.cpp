@@ -316,7 +316,6 @@ bool CBSPlanner::plan(const struct PlannerOptions &options) {
     }
     auto root_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> root_time = (root_end - root_start);
-    // std::cout << "Root node time: " << root_time.count() << '\n';
 
     open.push(root);
     int num_nodes_expanded = 0;
@@ -331,40 +330,13 @@ bool CBSPlanner::plan(const struct PlannerOptions &options) {
         
         CBSNode* current = open.top();
         open.pop();
-        
-        // std::cout << "CBS High-level Open size: " << open.size() << '\n';
 
-        // //Print all constraints in the current node, in order of robot id
-        // std::cout << "Current node constraints: \n";
-        // for (int i = 0; i < num_robots_; i++) {
-        //    std::cout << "Robot " << i << ": ";
-        //    for(int j = 0; j < current->constraints.size(); j++) {
-        //        if(current->constraints[j].robot_id == i) {
-        //            // Use posehash and poseedgehash to print the constraints
-        //            if(current->constraints[j].type == ConstraintType::VERTEX) {
-        //                RobotPoseHash pose_hash;
-        //                std::cout << "Vertex, " << pose_hash(current->constraints[j].pose);
-        //           } else if(current->constraints[j].type == ConstraintType::EDGE) {
-        //                PoseEdgeHash pose_edge_hash;
-        //                std::cout << "Edge, " << pose_edge_hash(PoseEdge(current->constraints[j].pose, current->constraints[j].to_pose));
-        //            } else {
-        //                std::cout << "Unknown constraint type ";
-        //            }
-        //            std::cout << ", time, " << current->constraints[j].time;
-        //            std::cout << "| ";
-        //        }
-        //    }
-        //    std::cout << std::endl;
-        // }
-        
         //Find all conflicts in the current node
         Conflict conflict_;
         PlannerOptions curr_option = options;
         if(findVertexConflict(current, conflict_) > 0) {
-            //std::cout << "Vertex conflict found\n";
             current->conflicts.push_back(conflict_);
         } else if (findEdgeConflict(current, conflict_, options) > 0) {
-            //std::cout << "Edge conflict found\n";
             current->conflicts.push_back(conflict_);
         }
         if(current->conflicts.empty()) { // return assuming no conflict, to test if discrete collision check will cause inaccuracy.
@@ -434,28 +406,10 @@ bool CBSPlanner::plan(const struct PlannerOptions &options) {
         std::tie(left_child, right_child) = generateChildNodes(current, conflict, options);
         if(left_child) {
             open.push(left_child);
-        } /*else {
-            total_failures++;
-            if(total_failures == densemap_threshold) {
-                // Use densemap
-                std::cout << "Applying dense roadmap for all agents" << std::endl;
-                for(int i = 0; i < num_robots_; i++) {
-                    agent_planners_[i]->applyDenseMap();
-                }
-            }
-        }*/
+        }
         if(right_child) {
             open.push(right_child);
-        } /*else {
-            total_failures++;
-            if(total_failures == densemap_threshold) {
-                // Use densemap
-                std::cout << "Applying dense roadmap for all agents" << std::endl;
-                for(int i = 0; i < num_robots_; i++) {
-                    agent_planners_[i]->applyDenseMap();
-                }
-            }
-        }*/
+        }
         delete current;
     }
     return false;
@@ -464,17 +418,6 @@ bool CBSPlanner::plan(const struct PlannerOptions &options) {
 std::pair<CBSNode*, CBSNode*> CBSPlanner::generateChildNodes(CBSNode *current, const Conflict &conflict, const PlannerOptions &options) {
     CBSNode *left_child = nullptr;
     CBSNode *right_child = nullptr;
-
-    // std::thread left_thread([&]() {
-    //     left_child = generateChildNode(current, conflict, options, 0);
-    // });
-
-    // std::thread right_thread([&]() {
-    //     right_child = generateChildNode(current, conflict, options, 1);
-    // });
-
-    // left_thread.join();
-    // right_thread.join();
 
     left_child = generateChildNode(current, conflict, options, 0);
     right_child = generateChildNode(current, conflict, options, 1);
@@ -606,51 +549,10 @@ void CBSPlanner::addConstraint(CBSNode *current, CBSNode *newNode, const Conflic
             if (newConstraint.type == ConstraintType::EDGE) {
                 newConstraint.to_pose = current->solution[r1].trajectory[t_idx1 + 1];
             }
-
-            // if(conflict.time_idx[i] < current->solution[conflict.robots[i]].times.size()) {
-            //     newConstraint.time = current->solution[conflict.robots[i]].times[conflict.time_idx[i]];
-            // } else {
-            //     newConstraint.time = current->solution[conflict.robots[1-i]].times[conflict.time_idx[i]];
-            // }
-            // if(conflict.time_idx[i] < current->solution[conflict.robots[1-i]].trajectory.size()) {
-            //     newConstraint.pose = current->solution[conflict.robots[1-i]].trajectory[conflict.time_idx[i]];
-            // } else {
-            //     newConstraint.pose = current->solution[conflict.robots[1-i]].trajectory.back();
-            // }
-            // if(newConstraint.type == ConstraintType::EDGE) {
-            //     if(conflict.time_idx[i] + 1 < current->solution[conflict.robots[1-i]].trajectory.size()) {
-            //         newConstraint.to_pose = current->solution[conflict.robots[1-i]].trajectory[conflict.time_idx[i] + 1];
-            //     } else {
-            //         newConstraint.to_pose = current->solution[conflict.robots[1-i]].trajectory.back();
-            //     }
-            // }
-            // // In case no conflict is recorded in the table, it need to at least know the direct vertex/edge constraint
-            // if(newConstraint.type == ConstraintType::VERTEX) {
-            //     if(conflict.time_idx[i] < current->solution[conflict.robots[i]].times.size()) {
-            //         newConstraint.self_vertex = current->solution[conflict.robots[i]].trajectory[conflict.time_idx[i]];
-            //     } else {
-            //         newConstraint.self_vertex = current->solution[conflict.robots[i]].trajectory.back();
-            //     }
-            // } else {
-            //     if(conflict.time_idx[i] < current->solution[conflict.robots[i]].times.size()) {
-            //         newConstraint.self_edge_start = current->solution[conflict.robots[i]].trajectory[conflict.time_idx[i]];
-            //         newConstraint.self_edge_end = current->solution[conflict.robots[i]].trajectory[conflict.time_idx[i] + 1];
-            //     } else {
-            //         newConstraint.self_edge_start = current->solution[conflict.robots[i]].trajectory.back();
-            //         newConstraint.self_edge_end = current->solution[conflict.robots[i]].trajectory.back();
-            //     }
-            // }
         } else { // vertex or edge constraint
             newConstraint.robot_id = r1;
             newConstraint.time = t1; // t0 should be the same as t1
             newConstraint.pose = pose1;
-            // if(conflict.time_idx[i] < current->solution[conflict.robots[i]].times.size()) {
-            //     newConstraint.time = current->solution[conflict.robots[i]].times[conflict.time_idx[i]];
-            //     newConstraint.pose = current->solution[conflict.robots[i]].trajectory[conflict.time_idx[i]];
-            // } else {
-            //     newConstraint.time = current->solution[conflict.robots[1-i]].times[conflict.time_idx[i]];
-            //     newConstraint.pose = current->solution[conflict.robots[i]].trajectory.back();
-            // }
             if(newConstraint.type == ConstraintType::EDGE) {
                 newConstraint.to_pose = current->solution[r1].trajectory[t_idx1 + 1];
             }
@@ -721,30 +623,6 @@ bool CBSPlanner::findVertexConflict(const CBSNode *node, Conflict &conflict) {
             // Check target conflicts
             if(node->solution[node->robots[i]].times.size() < node->solution[node->robots[j]].times.size()) {
                 for(int k = node->solution[node->robots[j]].times.size() - 1; k >= node->solution[node->robots[i]].times.size(); k--) {
-                    // Query the collision map of both robots before checking
-                    // auto key = std::make_pair(node->solution[node->robots[i]].trajectory.back(), node->solution[node->robots[j]].trajectory[k]);
-                    // int res_i = roadmaps_[node->robots[i]]->queryVertexCollisionMap(key);
-                    // int res_j = roadmaps_[node->robots[j]]->queryVertexCollisionMap(key);
-                    // if((res_i == 1) || (res_j == 1)) {
-                    //     conflict.type = ConstraintType::VERTEX;
-                    //     conflict.isTarget = true;
-                    //     conflict.robots.push_back(node->robots[i]);
-                    //     conflict.robots.push_back(node->robots[j]);
-                    //     conflict.time_idx.push_back(k);
-                    //     conflict.time_idx.push_back(k);
-                    //     return true;
-                    // } else if((res_i == 0) || (res_j == 0)) {
-                    //     // no collision found, proceed to the next vertex
-                    //     continue;
-                    // }
-                    /*
-                    bool voxel_res = instance_->checkVertexCollisionByVoxels({key.first, key.second}, voxel_grid_);
-                    if(!voxel_res) {
-                        roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, false);
-                        roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, false);
-                        continue;
-                    }
-                    */
                     if(instance_->checkCollision({node->solution[node->robots[i]].trajectory.back(), node->solution[node->robots[j]].trajectory[k]}, true)) {
                         conflict.type = ConstraintType::VERTEX;
                         conflict.isTarget = true;
@@ -752,42 +630,11 @@ bool CBSPlanner::findVertexConflict(const CBSNode *node, Conflict &conflict) {
                         conflict.robots.push_back(node->robots[j]);
                         conflict.time_idx.push_back(k);
                         conflict.time_idx.push_back(k);
-                        // Update the collision maps for both robots
-                        // roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, true);
-                        // roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, true);
                         return true;
-                    } else {
-                        // Update the collision maps for both robots
-                        // roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, false);
-                        // roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, false);
                     }
                 }
             } else if(node->solution[node->robots[i]].times.size() > node->solution[node->robots[j]].times.size()) {
                 for(int k = node->solution[node->robots[i]].times.size() - 1; k >= node->solution[node->robots[j]].times.size(); k--) {
-                    // Query the collision map of both robots before checking
-                    // auto key = std::make_pair(node->solution[node->robots[i]].trajectory[k], node->solution[node->robots[j]].trajectory.back());
-                    // int res_i = roadmaps_[node->robots[i]]->queryVertexCollisionMap(key);
-                    // int res_j = roadmaps_[node->robots[j]]->queryVertexCollisionMap(key);
-                    // if((res_i == 1) || (res_j == 1)) {
-                    //     conflict.type = ConstraintType::VERTEX;
-                    //     conflict.isTarget = true;
-                    //     conflict.robots.push_back(node->robots[j]);
-                    //     conflict.robots.push_back(node->robots[i]);
-                    //     conflict.time_idx.push_back(k);
-                    //     conflict.time_idx.push_back(k);
-                    //     return true;
-                    // } else if((res_i == 0) || (res_j == 0)) {
-                    //     // no collision found, proceed to the next vertex
-                    //     continue;
-                    // }
-                    /*
-                    bool voxel_res = instance_->checkVertexCollisionByVoxels({key.first, key.second}, voxel_grid_);
-                    if(!voxel_res) {
-                        roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, false);
-                        roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, false);
-                        continue;
-                    }
-                    */
                     if(instance_->checkCollision({node->solution[node->robots[i]].trajectory[k], node->solution[node->robots[j]].trajectory.back()}, true)) {
                         conflict.type = ConstraintType::VERTEX;
                         conflict.isTarget = true;
@@ -795,57 +642,19 @@ bool CBSPlanner::findVertexConflict(const CBSNode *node, Conflict &conflict) {
                         conflict.robots.push_back(node->robots[i]);
                         conflict.time_idx.push_back(k);
                         conflict.time_idx.push_back(k);
-                        // Update the collision maps for both robots
-                        // roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, true);
-                        // roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, true);
                         return true;
-                    } else {
-                        // Update the collision maps for both robots
-                        // roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, false);
-                        // roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, false);
                     }
                 }
             }
             //Check vertex conflicts
             for(int k = std::min(node->solution[node->robots[i]].times.size(), node->solution[node->robots[j]].times.size()) - 1; k >= 0; k--) {
-                // Query the collision map of both robots before checking
-                // auto key = std::make_pair(node->solution[node->robots[i]].trajectory[k], node->solution[node->robots[j]].trajectory[k]);
-                // int res_i = roadmaps_[node->robots[i]]->queryVertexCollisionMap(key);
-                // int res_j = roadmaps_[node->robots[j]]->queryVertexCollisionMap(key);
-
-                // if((res_i == 1) || (res_j == 1)) {
-                //     conflict.type = ConstraintType::VERTEX;
-                //     conflict.robots.push_back(node->robots[i]);
-                //     conflict.robots.push_back(node->robots[j]);
-                //     conflict.time_idx.push_back(k);
-                //     conflict.time_idx.push_back(k);
-                //     return true;
-                // } else if((res_i == 0) || (res_j == 0)) {
-                //     // no collision found, proceed to the next vertex
-                //     continue;
-                // }
-                /*
-                bool voxel_res = instance_->checkVertexCollisionByVoxels({key.first, key.second}, voxel_grid_);
-                if(!voxel_res) {
-                    roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, false);
-                    roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, false);
-                    continue;
-                }
-                */
                 if(instance_->checkCollision({node->solution[node->robots[i]].trajectory[k], node->solution[node->robots[j]].trajectory[k]}, true)) {
                     conflict.type = ConstraintType::VERTEX;
                     conflict.robots.push_back(node->robots[i]);
                     conflict.robots.push_back(node->robots[j]);
                     conflict.time_idx.push_back(k);
                     conflict.time_idx.push_back(k);
-                    // Update the collision maps for both robots
-                    // roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, true);
-                    // roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, true);
                     return true;
-                } else {
-                    // Update the collision maps for both robots
-                    // roadmaps_[node->robots[i]]->updateVertexCollisionMap(key, false);
-                    // roadmaps_[node->robots[j]]->updateVertexCollisionMap(key, false);
                 }
             }
         }
@@ -1634,7 +1443,7 @@ bool loadSolution(std::shared_ptr<PlanInstance> instance,
         plan_traj.joint_trajectory.points.push_back(point);
         t++;
     }
-    std::cout << "Loaded " << t << " points" << std::endl;
+    log("Loaded " + std::to_string(t) + " points", LogLevel::INFO);
     
     // compute velocities and accelerations with central difference
     auto &points = plan_traj.joint_trajectory.points;
