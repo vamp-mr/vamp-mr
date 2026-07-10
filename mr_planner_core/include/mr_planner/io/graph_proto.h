@@ -1,3 +1,5 @@
+// Protobuf export of execution graphs: serializes a TPG or ADG to a
+// mr_planner_graph.proto file on disk for inspection and interchange.
 #pragma once
 
 #include <string>

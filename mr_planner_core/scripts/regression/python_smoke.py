@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""Regression smoke test for the mr_planner_core Python bindings: exercises
+planning, shortcutting, and graph serialization end to end, with an optional
+benchmark suite over environments and planners."""
 import argparse
 import json
 import subprocess

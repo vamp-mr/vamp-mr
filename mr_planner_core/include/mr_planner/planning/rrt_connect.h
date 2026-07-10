@@ -1,3 +1,5 @@
+// Single-robot RRT-Connect planner (bidirectional trees with kd-tree nearest
+// neighbor), supporting CBS avoidance constraints and static obstacle poses.
 #ifndef MR_PLANNER_RRT_CONNECT_H
 #define MR_PLANNER_RRT_CONNECT_H
 

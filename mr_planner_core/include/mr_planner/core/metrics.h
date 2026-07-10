@@ -1,3 +1,5 @@
+// Trajectory quality metrics: computes smoothness statistics (normalized jerk
+// score and directional consistency) for a synchronized multi-robot trajectory.
 #pragma once
 
 #include <mr_planner/core/instance.h>

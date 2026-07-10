@@ -1,3 +1,10 @@
+"""Utilities for parsing MoveIt SRDF files and extracting named joint poses.
+
+Provides a minimal SRDF model (planning groups and named group states) and
+helpers to resolve a named pose into per-robot joint value matrices, as used
+when seeding multi-robot planning problems from SRDF ``group_state`` entries.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,21 +15,32 @@ from xml.etree import ElementTree
 
 @dataclass(frozen=True)
 class SrdfGroup:
+    """An SRDF planning group: its directly listed joints and nested subgroup names."""
+
     joints: Tuple[str, ...]
     subgroups: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class SrdfModel:
+    """Parsed SRDF content: groups by name, and named group states keyed by (group, state)."""
+
     groups: Dict[str, SrdfGroup]
     group_states: Dict[Tuple[str, str], Tuple[Tuple[str, float], ...]]  # (group, state) -> ordered joints
 
 
 def _as_path(path: Union[str, Path]) -> Path:
+    """Coerce a str or Path into a Path."""
     return path if isinstance(path, Path) else Path(path)
 
 
 def load_srdf(srdf_path: Union[str, Path]) -> SrdfModel:
+    """Parse an SRDF XML file into an SrdfModel.
+
+    Reads ``<group>`` elements (joint and nested group children) and
+    ``<group_state>`` elements (ordered joint name/value pairs). Entries
+    missing required name attributes are skipped.
+    """
     srdf_path = _as_path(srdf_path)
     root = ElementTree.parse(str(srdf_path)).getroot()
 
@@ -63,11 +81,17 @@ def load_srdf(srdf_path: Union[str, Path]) -> SrdfModel:
 
 
 def resolve_group_joints(model: SrdfModel, group_name: str) -> Tuple[str, ...]:
+    """Return the ordered joint names of a group, recursively expanding subgroups.
+
+    Raises KeyError if a group is not defined and ValueError on cyclic
+    subgroup references.
+    """
     resolved: List[str] = []
     stack: List[str] = [group_name]
     visiting: Set[str] = set()
 
     def visit(name: str) -> None:
+        """Append the group's joints to `resolved`, then recurse into its subgroups."""
         if name in visiting:
             raise ValueError(f"SRDF group recursion detected: {name}")
         visiting.add(name)
@@ -86,6 +110,11 @@ def resolve_group_joints(model: SrdfModel, group_name: str) -> Tuple[str, ...]:
 
 
 def group_state(model: SrdfModel, group_name: str, state_name: str) -> Tuple[Tuple[str, float], ...]:
+    """Look up a named group state, returning its ordered (joint, value) pairs.
+
+    Raises KeyError listing the available state names for the group if the
+    requested state is not found.
+    """
     try:
         return model.group_states[(group_name, state_name)]
     except KeyError as exc:
@@ -103,6 +132,13 @@ def pose_matrix_from_group_state(
     pose_name: str,
     robot_groups: Sequence[str],
 ) -> List[List[float]]:
+    """Build a per-robot joint value matrix from a single named group state.
+
+    Looks up ``pose_name`` on ``move_group`` and, for each group in
+    ``robot_groups``, returns that group's joint values in resolved joint
+    order. Raises ValueError if the state is empty or contributes no joints
+    for some robot group.
+    """
     joints_and_values = list(group_state(model, move_group, pose_name))
     if not joints_and_values:
         raise ValueError(f"Empty group_state for group={move_group!r}, pose={pose_name!r}")
@@ -128,6 +164,13 @@ def pose_matrix_from_named_pose(
     robot_groups: Sequence[str],
     pose_name: str,
 ) -> List[List[float]]:
+    """Load an SRDF file and resolve a named pose into per-robot joint values.
+
+    Prefers a ``group_state`` defined on ``move_group``; otherwise falls back
+    to per-robot group states sharing the same pose name. Returns one list of
+    joint values per entry in ``robot_groups``. Raises KeyError if the pose is
+    missing for the move group and any robot group.
+    """
     model = load_srdf(srdf_path)
 
     if (move_group, pose_name) in model.group_states:

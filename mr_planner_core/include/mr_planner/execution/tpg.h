@@ -1,3 +1,7 @@
+// Temporal Plan Graph (TPG): converts a synchronized multi-robot trajectory into
+// a partially ordered execution graph (type-1 edges along each robot's own path,
+// type-2 edges for cross-robot collision dependencies), then shortcuts it to
+// reduce flowtime/makespan and schedules it for asynchronous execution.
 #ifndef MR_PLANNER_EXECUTION_H
 #define MR_PLANNER_EXECUTION_H
 
@@ -40,6 +44,8 @@ inline void serialize(
 
 namespace tpg {
 
+    /// Options controlling TPG construction, shortcutting (sampling strategy,
+    /// time budget, tightness), logging, and execution (lookahead, thresholds).
     struct TPGConfig {
         bool shortcut = true;
         bool random_shortcut = true;
@@ -97,6 +103,10 @@ namespace tpg {
     using TrajectoryClient = actionlib::SimpleActionClient<moveit_msgs::ExecuteTrajectoryAction>;
 #endif
 
+    /// One discretized waypoint of one robot in the TPG. Nodes are linked by
+    /// type-1 edges (Type1Next/Type1Prev: the robot's own trajectory order) and
+    /// type-2 edges (Type2Next/Type2Prev: cross-robot precedence constraints
+    /// that prevent collisions).
     struct Node
     {
         template<class Archive>
@@ -132,6 +142,10 @@ namespace tpg {
 
     };
 
+    /// A type-2 (inter-robot) edge: `nodeTo`'s robot may not pass `nodeTo` until
+    /// `nodeFrom`'s robot has passed `nodeFrom`. `switchable` marks edges whose
+    /// direction may still be flipped during optimization; `tight` marks edges
+    /// currently on a critical path (the constraint is active).
     struct type2Edge
     {
         template<class Archive>
@@ -161,6 +175,11 @@ namespace tpg {
         UNTIGHT = 4,
     };
     
+    /// A candidate shortcut that replaces the path between two nodes `ni` and
+    /// `nj` of one robot with a shorter `path`. May be partial (only a subset of
+    /// joint dimensions, `subset_indices`) or composite (synchronized shortcuts
+    /// across several robots, `comp_shortcuts`). `col_type` records why a
+    /// candidate was rejected.
     struct Shortcut {
         std::weak_ptr<Node> ni;
         std::weak_ptr<Node> nj;
@@ -197,6 +216,10 @@ namespace tpg {
 
     };
 
+    /// Samples random shortcut candidates between node pairs, optionally biased
+    /// toward promising regions, partial (joint-subset) or composite
+    /// (multi-robot) shortcuts. Remembers failed/known-useless candidates to
+    /// avoid resampling them.
     class ShortcutSampler {
     public:
         ShortcutSampler(const TPGConfig &config);
@@ -232,6 +255,9 @@ namespace tpg {
 
     };
 
+    /// Deterministic alternative to ShortcutSampler: enumerates shortcut
+    /// candidates by looping over node pairs (forward/backward, single or
+    /// double loop, per TPGConfig).
     class ShortcutIterator {
     public:
         ShortcutIterator(const TPGConfig &config);
@@ -255,6 +281,12 @@ namespace tpg {
         bool forward_singleloop = true;
     };
 
+    /// Temporal Plan Graph over a synchronized multi-robot solution. `init`
+    /// discretizes the solution into per-robot node chains (type-1 edges) and
+    /// adds type-2 edges wherever the collision-check matrix shows cross-robot
+    /// dependencies; `optimize` runs time-budgeted shortcutting; `schedule`
+    /// hands out the next executable trajectory segment per robot at runtime.
+    /// Serializable with Boost, and the base class of the ADG.
     class TPG {
     friend class boost::serialization::access;
 
@@ -286,15 +318,31 @@ namespace tpg {
         // copy constructor
         TPG(const TPG &tpg);
         virtual void reset();
+        /// Build the TPG from a solution: discretize at config.dt, create the
+        /// per-robot node chains, and add type-2 edges from pairwise collision
+        /// checks (then transitively reduce them).
         virtual bool init(std::shared_ptr<PlanInstance> instance, const MRTrajectory &solution, const TPGConfig &config);
+        /// Shortcutting entry point: repeatedly sample (or iterate) candidate
+        /// shortcuts, validate them against the environment and the other
+        /// robots' timed nodes, and splice accepted ones into the graph, until
+        /// config.shortcut_time seconds have elapsed.
         virtual bool optimize(std::shared_ptr<PlanInstance> instance, const TPGConfig &config);
+        /// Write the graph in Graphviz dot format (for debugging).
         virtual bool saveToDotFile(const std::string &filename) const;
         virtual void init_executed_steps();
+        /// Feed back the measured joint state of a robot; advances the robot's
+        /// executed-step counter used to release type-2 dependencies.
         virtual void update_joint_states(const std::vector<double> &joint_states, int robot_id);
+        /// Runtime scheduling: return the next trajectory segment robot
+        /// `robot_id` may execute given the type-2 edges satisfied so far
+        /// (WAIT / TRAJECTORY / DONE / ERROR).
         virtual ScheduleStatus schedule(int robot_id, RobotTrajectory &segment);
         virtual std::string getInhandObjectName(int robot_id) const;
+        /// Append a CSV row of planning/shortcutting statistics to `filename`.
         virtual void saveStats(const std::string &filename, const std::string &start_pose = "", const std::string &goal_pose = "") const;
         virtual bool replanRecovery(const NodePtr &startNode, NodePtr &endNode);
+        /// Re-synchronize the (shortcut) graph into one timed trajectory per
+        /// robot, all sharing a common clock.
         virtual MRTrajectory getSyncJointTrajectory(std::shared_ptr<PlanInstance> instance) const;
 
 #if MR_PLANNER_WITH_ROS

@@ -1,3 +1,6 @@
+// Runtime loader for VAMP plugin shared libraries (see vamp_plugin_api.h).
+// Opens the library, validates the plugin ABI version, and wraps the plugin's
+// PlanInstance in a shared_ptr that keeps the library loaded until destruction.
 #pragma once
 
 #include <memory>

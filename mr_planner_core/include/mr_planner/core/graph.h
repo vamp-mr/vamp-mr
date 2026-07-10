@@ -1,3 +1,6 @@
+// Core graph data structures for sampling-based motion planning: Vertex and
+// Tree for RRT-style search, Graph (with UnionFind connectivity) for PRM
+// roadmaps, and SafeInterval for SIPP-based planners. Boost-serializable.
 #ifndef GRAPH_H
 #define GRAPH_H
 
@@ -10,12 +13,17 @@
 #include <boost/serialization/serialization.hpp>
 #include <boost/serialization/shared_ptr.hpp>
 
+/// Collision-free time window [t_start, t_end] at a given pose, used by
+/// safe-interval path planning (SIPP) variants.
 struct SafeInterval {
     double t_start;
     double t_end;
     RobotPose pose;
 };
 
+/// Search-graph node holding a robot pose plus optional timing data (arrival
+/// time, safe interval) and tree structure (parent/root links). A connection
+/// vertex that joins two trees additionally records otherParent/otherRoot.
 class Vertex {
 public:
     Vertex() {} // default ctor for serialization
@@ -83,6 +91,8 @@ private:
 };
 using VertexPtr = std::shared_ptr<Vertex>;
 
+/// Disjoint-set (union-find) with path compression and union by rank;
+/// tracks connected components of roadmap vertices by id.
 // Union find with all optimizations
 class UnionFind {
 public:
@@ -143,6 +153,8 @@ private:
     }
 };
 
+/// Forest of vertices for tree-based planners (e.g. RRT): tracks root nodes,
+/// all vertices, and a pose-indexed lookup map.
 class Tree {
 public:
     Tree() {};
@@ -172,6 +184,7 @@ public:
     std::unordered_map<RobotPose, std::vector<VertexPtr>> vertex_map;
 };
 
+/// Outcome of an RRT extend/grow step.
 enum GrowState {
     ADVANCED,
     TRAPPED,
@@ -179,6 +192,9 @@ enum GrowState {
 };
 
 
+/// Undirected roadmap graph (PRM): vertices indexed by id with adjacency
+/// sets, a pose-to-vertex lookup, and union-find for fast same-component
+/// (connectivity) queries.
 class Graph {
     public:
         Graph() {}
@@ -193,6 +209,7 @@ class Graph {
             return vertex;
         }
 
+        /// Add an undirected edge and merge the two vertices' components.
         void addEdge(std::shared_ptr<Vertex> u, std::shared_ptr<Vertex> v) {
             adjList[u->id].insert(v);
             adjList[v->id].insert(u);
@@ -211,6 +228,7 @@ class Graph {
             return nullptr;
         }
 
+        /// True if u and v are already connected in the roadmap (union-find query).
         bool inSameComponent(const std::shared_ptr<Vertex> &u, const std::shared_ptr<Vertex> &v) {
             return uf_.find(u->id) == uf_.find(v->id);
         }

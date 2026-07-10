@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Load an existing multi-robot solution.csv trajectory, run shortcutting via
+mr_planner_core, and write the shortcut trajectory to a new CSV."""
 
 import argparse
 import csv

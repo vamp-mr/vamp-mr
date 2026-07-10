@@ -1,3 +1,7 @@
+// VampInstance<RobotTs...>: the SIMD-accelerated multi-robot collision backend.
+// Wraps VAMP's per-robot kernels and multi-robot composition (fkcc_multi_*) behind
+// the PlanInstance interface consumed by all planners, shortcutters, and TPG/ADG
+// construction. See the class documentation below for the design.
 #ifndef VAMP_INSTANCE_H
 #define VAMP_INSTANCE_H
 
@@ -62,6 +66,19 @@ struct MeshcatVisualizerOptions
     bool auto_flush{false};
 };
 
+/// Multi-robot planning environment backed by VAMP's SIMD collision kernels.
+///
+/// Each template parameter is a compiled VAMP robot type (e.g. vamp::robots::Panda);
+/// the pack defines a fixed team of robots, each with its own base transform,
+/// composed at collision-check time via vamp::collision::fkcc_multi_* (there is no
+/// fused multi-robot model). Implements the PlanInstance backend contract used by
+/// all planners: pose/motion/trajectory collision queries, distance/interpolation,
+/// sampling, attachments and movable objects, plus optional Meshcat visualization.
+///
+/// Because the fast SIMD path requires robot types at compile time while CBS/TPG
+/// query arbitrary robot subsets at runtime, the class precomputes per-index and
+/// per-pair function-pointer dispatch tables (see subset_*_dispatch_ members) that
+/// bridge runtime subset requests to the right template instantiation.
 template <typename... RobotTs>
 class VampInstance : public PlanInstance {
     static_assert(sizeof...(RobotTs) > 0, "VampInstance requires at least one robot type");
@@ -70,7 +87,9 @@ class VampInstance : public PlanInstance {
 
 public:
     using RobotTuple = std::tuple<RobotTs...>;
+    /// Number of robots in the team (the size of the template pack).
     static constexpr std::size_t kRobotCount = sizeof...(RobotTs);
+    /// SIMD lane width used by the VAMP kernels.
     static constexpr std::size_t kRake = vamp::FloatVectorWidth;
 
     VampInstance();
@@ -137,14 +156,20 @@ public:
                               bool self=true) override;
     bool setCollision(const std::string &obj_name, const std::string &link_name, bool allow) override;
 
+    /// L1 joint-space distance between two poses of the same robot.
     double computeDistance(const RobotPose &a, const RobotPose &b) const override;
     double computeDistance(const RobotPose &a, const RobotPose &b, int dim) const override;
+    /// Returns true when the straight-line motion a->b (same robot) is collision
+    /// free at col_step_size resolution. This is the planners' inner-loop edge check.
     bool connect(const RobotPose &a, const RobotPose &b, double col_step_size = 0.1, bool debug=false) override;
+    /// Moves from a toward b by at most max_dist; result holds the reached pose.
+    /// Returns true when the (possibly truncated) motion is collision free.
     bool steer(const RobotPose &a,
                const RobotPose &b,
                double max_dist,
                RobotPose &result,
                double col_step_size = 0.1) override;
+    /// Samples a uniform random configuration for the pose's robot (in place).
     bool sample(RobotPose &pose) override;
     RobotPose interpolate(const RobotPose &a, const RobotPose &b, double t) const override;
     double interpolate(const RobotPose &a, const RobotPose &b, double t, int dim) const override;
@@ -173,6 +198,8 @@ private:
     template <std::size_t Index>
     using RobotAt = std::tuple_element_t<Index, RobotTuple>;
 
+    /// Fixed-size view of one pose per robot slot (nullptr = robot not involved
+    /// in the query). Holds pointers into caller-owned poses; no copies.
     using PoseArray = std::array<const RobotPose *, kRobotCount>;
 
     using SubsetCollisionFn = bool (*)(const VampInstance &, const PoseArray &, bool);
@@ -204,6 +231,8 @@ private:
     static auto configurationBlockFromPose(const RobotPose &pose)
         -> typename Robot::template ConfigurationBlock<kRake>;
 
+    /// Maps a pose list to per-robot slots by robot_id (throws on out-of-range or
+    /// duplicate ids; with allow_partial=false also on missing robots).
     PoseArray gatherPoses(const std::vector<RobotPose> &poses, bool allow_partial) const;
 
     template <std::size_t Index>
@@ -623,6 +652,11 @@ private:
         return dst;
     }
 
+    // Runtime-subset dispatch tables: CBS/TPG check one robot or a pair at a
+    // time, but the SIMD path needs robot types at compile time. These tables
+    // hold function pointers to per-index / per-pair template instantiations so
+    // a runtime "check robots {i,j}" resolves in O(1). This is the hot path for
+    // CBS conflict checks and TPG type-2 edge discovery.
     static inline const auto subset_collision_single_dispatch_ =
         makeSingleSubsetDispatch<SubsetCollisionFn>(CollisionSingleFunctor{});
     static inline const auto subset_collision_pair_dispatch_ =

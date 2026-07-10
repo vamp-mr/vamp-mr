@@ -1,3 +1,6 @@
+// JSON skillplan I/O (AIDF-style skill sequences): exports multi-robot
+// trajectories or an ActivityGraph plan to skillplan JSON, and extracts
+// per-robot or synchronized trajectories back from a skillplan file.
 #pragma once
 
 #include <jsoncpp/json/json.h>

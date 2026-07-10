@@ -1,3 +1,6 @@
+// Thread-safe singleton logger with selectable output (stdout, file, ROS, none)
+// and severity filtering, plus free convenience log() overloads for messages,
+// poses, and trajectories, and CSV-style progress-file helpers for benchmarks.
 #ifndef LOGGER_H
 #define LOGGER_H
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Build an execution graph (TPG or ADG) from a skillplan.json via
+mr_planner_core and optionally play it back in Meshcat."""
 
 import argparse
 import json

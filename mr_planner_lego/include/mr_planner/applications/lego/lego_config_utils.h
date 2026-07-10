@@ -1,3 +1,7 @@
+// Helpers for parsing LEGO application JSON configs: resolves repo-relative
+// paths (e.g. "/config/...") against a root directory and loads per-robot
+// calibration file sets (DH/tool/base frames) from either the "robots" array
+// or the legacy r1_/r2_ key layout.
 #pragma once
 
 #include <mr_planner/applications/lego/lego/Lego.hpp>
@@ -12,6 +16,9 @@ namespace lego_manipulation
 {
 namespace lego
 {
+/// Resolve a config path against the repository root. Paths beginning with
+/// "/config/", "/outputs/", or "/proto/" are treated as repo-relative for
+/// backward compatibility; other leading-slash paths are absolute.
 inline std::string resolveRepoPath(const std::string &root_pwd, const std::string &path)
 {
     if (path.empty() || root_pwd.empty())
@@ -41,6 +48,9 @@ inline std::string resolveRepoPath(const std::string &root_pwd, const std::strin
     return strip_trailing_slash(root_pwd) + "/" + path;
 }
 
+/// Load per-robot calibration file sets from a JSON config. Reads the
+/// "robots" array if present; otherwise falls back to the legacy two-robot
+/// r1_*/r2_* key layout. Throws std::runtime_error on missing keys.
 inline std::vector<RobotCalibration> loadRobotCalibrations(const Json::Value &config,
                                                            const std::string &root_pwd)
 {

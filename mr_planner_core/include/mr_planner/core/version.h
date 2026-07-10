@@ -1,3 +1,5 @@
+// Library version constant for mr_planner_core, exposed to consumers
+// (e.g. the Python bindings) as a plain string.
 #pragma once
 
 namespace mr_planner::core

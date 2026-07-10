@@ -1,3 +1,6 @@
+// Factory for VAMP-backed planning environments: resolves an environment name
+// (built-in variant or plugin JSON description) to an EnvironmentConfig, creates
+// the corresponding PlanInstance, and populates obstacles/attachments/base transforms.
 #pragma once
 
 #if !MR_PLANNER_WITH_VAMP

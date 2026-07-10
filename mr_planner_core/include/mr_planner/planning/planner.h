@@ -1,3 +1,7 @@
+// Multi-robot planner interfaces and implementations: AbstractPlanner base class,
+// PriorityPlanner (sequential prioritized planning), and CBSPlanner (Conflict-Based
+// Search over per-robot PRM roadmaps), plus free-function utilities for saving,
+// loading, validating, and retiming multi-robot trajectories.
 #ifndef MR_PLANNER_PLANNER_H
 #define MR_PLANNER_PLANNER_H
 
@@ -18,6 +22,8 @@
 #endif
 
 // Abstract planner class
+/// Base interface for multi-robot planners: plan() computes trajectories for
+/// all robots in the instance, getPlan() retrieves the resulting solution.
 class AbstractPlanner {
 public:
     // Initialize the planner with a specific planning problem instance
@@ -47,6 +53,9 @@ protected:
 
 // Example of a concrete planner class that implements the AbstractPlanner interface
 // This is where you would implement specific planning algorithms
+/// Prioritized planner: plans robots one at a time in (optionally random)
+/// priority order, treating earlier robots' trajectories as moving obstacles
+/// for the later ones.
 class PriorityPlanner : public AbstractPlanner {
 public:
     PriorityPlanner(std::shared_ptr<PlanInstance> instance);
@@ -61,6 +70,8 @@ protected:
     bool solved = false;
 };
 
+/// Node in the CBS constraint tree: the accumulated constraints, the per-robot
+/// solution planned under them, and cost / conflict statistics for ordering.
 struct CBSNode {
     std::vector<int> robots;
     std::vector<Conflict> conflicts;
@@ -76,6 +87,8 @@ struct CBSNode {
     std::uint64_t salt = 0;
 };
 
+/// Open-list ordering for CBS: lower makespan first, then fewer conflicts,
+/// then fewer conflicting pairs; a random salt breaks remaining ties.
 class CompareNode {
 public:
     bool operator()(const CBSNode* a, const CBSNode* b) const {
@@ -87,6 +100,7 @@ public:
     }
 };
 
+/// Focal-list ordering for CBS: fewer conflicts first, then lower makespan.
 class CompareFocal {
 public:
     bool operator()(const CBSNode* a, const CBSNode* b) const {
@@ -94,6 +108,9 @@ public:
     }
 };
 
+/// Conflict-Based Search planner. Each robot plans on its own PRM roadmap;
+/// robot-robot vertex/edge conflicts are resolved by branching on constraints
+/// in a best-first constraint-tree search (optionally with a focal list).
 class CBSPlanner : public AbstractPlanner {
 public:
     CBSPlanner(std::shared_ptr<PlanInstance> instance);
@@ -102,30 +119,42 @@ public:
 
     CBSPlanner(std::shared_ptr<PlanInstance> instance, std::vector<std::shared_ptr<RoadMap>> roadmaps, std::shared_ptr<VoxelGrid> voxel_grid);
 
+    /// Run CBS until a conflict-free solution is found or the time limit expires.
     virtual bool plan(const struct PlannerOptions &options) override;
 
+    /// Copy the best solution found; returns false if unsolved.
     virtual bool getPlan(MRTrajectory &solution) const override;
 
     double getPlanTime() const;
 
+    /// Request termination of the underlying single-agent planners.
     void stop();
 
+    /// Find the first same-timestep robot-robot (or robot-target) collision in the node's solution.
     bool findVertexConflict(const CBSNode *node, Conflict &conflict);
 
+    /// Find the first robot-robot collision along interpolated edge motions in the node's solution.
     bool findEdgeConflict(const CBSNode *node, Conflict &conflict, const PlannerOptions &options);
 
+    /// Count conflicting robot pairs and total conflicts in the node's solution; returns {num_pairs, num_conflicts}.
     std::pair<int, int> countNumConflicts(const CBSNode *node, const PlannerOptions &options);
 
+    /// Swap every robot's start and goal (for planning the reverse query).
     void swapStartGoal();
 
+    /// Reverse the stored solution back to the original start-to-goal direction after swapStartGoal().
     void revertSolution();
 
+    /// Retime a synchronized solution so each timestep takes only the slowest robot's execution time.
     MRTrajectory accelerateSolution(const MRTrajectory &solution);
 
+    /// Branch on a conflict: create both child nodes, each constraining one of the two robots.
     std::pair<CBSNode*, CBSNode*> generateChildNodes(CBSNode *current, const Conflict &conflict, const PlannerOptions &options);
 
+    /// Create one child node that constrains robot i of the conflict and replans that robot.
     CBSNode *generateChildNode(CBSNode *current, const Conflict &conflict, const PlannerOptions &options, int i);
 
+    /// Append the constraint derived from the conflict (for robot i) to the child node.
     void addConstraint(CBSNode *current, CBSNode *newNode, const Conflict &conflict, int i);
 
 protected:

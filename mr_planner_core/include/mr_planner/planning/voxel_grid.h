@@ -1,3 +1,5 @@
+// Workspace voxel grid used to bias/inform planning: maps robot poses to
+// occupied voxel sets and answers approximate vertex-collision queries.
 #ifndef VOXEL_GRID_H
 #define VOXEL_GRID_H
 

@@ -1,3 +1,5 @@
+// Basic single-robot RRT planner over the joint space, used as a fallback and
+// as the tree-growth primitive for the roadmap resampler.
 #ifndef MR_PLANNER_RRT_H
 #define MR_PLANNER_RRT_H
 

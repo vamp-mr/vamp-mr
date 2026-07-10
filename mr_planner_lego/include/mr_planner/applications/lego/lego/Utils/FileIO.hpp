@@ -2,6 +2,9 @@
 // Copyright (c) 2025 Intelligent Control Lab, licensed under the MIT License.
 // See THIRD_PARTY_LICENSES.md for the full license text.
 // Modifications for VAMP-MR: ROS-free integration with the mr_planner_core planning engine.
+//
+// File I/O helpers for the LEGO utility layer: load/save Eigen matrices from/
+// to plain-text files (used for DH parameters, base frames, and calibration).
 #ifndef LEGO_UTILS_FILEIO_HPP
 #define LEGO_UTILS_FILEIO_HPP
 

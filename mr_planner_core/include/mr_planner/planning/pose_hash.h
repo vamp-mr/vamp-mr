@@ -1,3 +1,6 @@
+// RobotPose definition (robot id, group name, joint/hand values) with equality,
+// hashing, and boost serialization support so poses can key hash maps and be
+// stored in serialized roadmaps.
 #ifndef MR_PLANNER_POSE_HASH_H
 #define MR_PLANNER_POSE_HASH_H
 #include <boost/serialization/vector.hpp>

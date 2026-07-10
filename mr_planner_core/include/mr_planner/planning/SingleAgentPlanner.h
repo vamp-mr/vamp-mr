@@ -1,3 +1,6 @@
+// Abstract base class for single-robot planners (RRT, RRT-Connect, PRM, SIPP-RRT)
+// plus the PlannerOptions/Constraint types shared across planners. Single-agent
+// planners are composed by the multi-robot planners in planner.h (CBS, priority).
 #ifndef SINGLE_AGENT_PLANNER_H
 #define SINGLE_AGENT_PLANNER_H
 

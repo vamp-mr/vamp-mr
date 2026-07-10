@@ -1,3 +1,7 @@
+// Anytime trajectory shortcutter: repeatedly samples shortcut candidates
+// (composite, prioritized single-robot, or path shortcuts), validates them with
+// the collision checker, and rewrites the multi-robot trajectory within a time
+// budget. Includes the adaptive selector variants used in the paper.
 #ifndef MR_PLANNER_SHORTCUTTER_H
 #define MR_PLANNER_SHORTCUTTER_H
 

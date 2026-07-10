@@ -1,3 +1,7 @@
+// Action Dependency Graph (ADG) execution: extends the TPG with an
+// ActivityGraph so nodes carry task context. Adds task-precedence and
+// collision-based type-2 edges, applies scene updates (object attach/detach)
+// during execution, and delegates non-motion nodes to a Policy.
 #ifndef MR_PLANNER_ADG_H
 #define MR_PLANNER_ADG_H
 
@@ -7,6 +11,8 @@
 
 namespace tpg {
     
+    /// TPG node for a non-motion action (e.g. gripper open/close) that is
+    /// executed by a Policy instead of following a trajectory.
     struct PolicyNode : public Node {
         PolicyNode() = default;
         PolicyNode(int robot_id, Activity::Type type) : Node(robot_id, type) {
@@ -18,6 +24,9 @@ namespace tpg {
         bool isFinished();
     };
 
+    /// Activity-aware shortcut sampler: samples shortcut endpoints within the
+    /// activity structure of the ADG (optionally skipping home activities) so
+    /// shortcuts do not cross task boundaries incorrectly.
     class ShortcutSamplerADG : public ShortcutSampler {
     public:
         ShortcutSamplerADG(const TPGConfig &config, std::shared_ptr<ActivityGraph> act_graph,       
@@ -39,6 +48,8 @@ namespace tpg {
         bool skip_home_ = true;
     };
 
+    /// Activity-aware deterministic shortcut iterator: enumerates candidate
+    /// shortcuts per (robot, activity segment) via a work queue.
     class ShortcutIteratorADG : public ShortcutIterator {
     public:
         ShortcutIteratorADG(const TPGConfig &config, std::shared_ptr<ActivityGraph> act_graph,
@@ -58,6 +69,10 @@ namespace tpg {
         bool skip_home_ = true;
     };
 
+    /// Action Dependency Graph: a TPG whose nodes are grouped by activities of
+    /// an ActivityGraph. Encodes task precedence and inter-robot collision
+    /// dependencies as type-2 edges, updates the planning scene as objects are
+    /// attached/detached, and supports policy execution and replan recovery.
     class ADG: public TPG {
     friend class boost::serialization::access;
     template <class Archive>
@@ -72,7 +87,10 @@ namespace tpg {
         ADG() = default;
         ADG (std::shared_ptr<ActivityGraph> activity_graph);
 
+        /// Build the ADG from per-robot asynchronous trajectories whose
+        /// waypoints are segmented by activity (act_ids).
         bool init_from_asynctrajs(std::shared_ptr<PlanInstance> instance, const TPGConfig &config, const MRTrajectory &trajectories);
+        /// Build the ADG by stitching together one TPG per task/activity stage.
         bool init_from_tpgs(std::shared_ptr<PlanInstance> instance, const TPGConfig &config, const std::vector<std::shared_ptr<TPG>> &tpgs);
         virtual void reset() override;
         virtual void checkShortcuts(std::shared_ptr<PlanInstance> instance, Shortcut &shortcut, const std::vector<std::vector<NodePtr>> &timedNodes) const override;
@@ -85,6 +103,7 @@ namespace tpg {
 #endif
         virtual bool saveToDotFile(const std::string &filename) const override;
         virtual void setPolicy(std::shared_ptr<Policy> policy) {policy_ = policy;}
+        /// Set the activity a robot starts executing from (for resuming mid-plan).
         virtual void setExecStartAct(int robot_id, int act_id);
         const std::vector<int> &getExecStartActs() const { return exec_start_act_; }
         virtual int getExecutedAct(int robot_id) const override;
