@@ -489,7 +489,10 @@ bool TPG::findCollisionDeps(std::shared_ptr<PlanInstance> instance, const MRTraj
             while (node_i != nullptr) {
                 NodePtr node_j = node_j_start;
                 bool inCollision = false;
-                pair_scratch[0] = node_i->pose;
+                if (node_j != nullptr && node_j->timeStep < node_i->timeStep) {
+                    // Copy the invariant pose only when the sweep below will run.
+                    pair_scratch[0] = node_i->pose;
+                }
                 while (node_j != nullptr && node_j->timeStep < node_i->timeStep) {
                     pair_scratch[1] = node_j->pose;
                     if (instance->checkCollision(pair_scratch, true)) {

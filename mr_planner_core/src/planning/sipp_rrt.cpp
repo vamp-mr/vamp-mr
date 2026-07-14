@@ -310,14 +310,14 @@ bool SIPP_RRT::findSafeIntervals(const RobotPose &pose, std::vector<SafeInterval
     }
 
     int start_step = -1;
+    cc_pair_scratch_.resize(2);
+    cc_pair_scratch_[0] = pose;
     for (int s = 0; s <= t_max_steps_; ++s)
     {
         bool coll = false;
         for (std::size_t i = 0; i < obs_poses_.size(); ++i)
         {
             const int idx = (moving_obs_steps_ > 0) ? std::min(s, moving_obs_steps_ - 1) : 0;
-            cc_pair_scratch_.resize(2);
-            cc_pair_scratch_[0] = pose;
             cc_pair_scratch_[1] = obs_poses_[i][static_cast<std::size_t>(idx)];
             if (instance_->checkCollision(cc_pair_scratch_, true))
             {
@@ -374,11 +374,11 @@ bool SIPP_RRT::validateMotion(const RobotPose &pose_1, const RobotPose &pose_2, 
     const int dt_steps = t2_step - t1_step;
     if (dt_steps == 0)
     {
+        cc_pair_scratch_.resize(2);
+        cc_pair_scratch_[0] = pose_1;
         for (std::size_t i = 0; i < obs_poses_.size(); ++i)
         {
             const int idx = (moving_obs_steps_ > 0) ? std::min(t1_step, moving_obs_steps_ - 1) : 0;
-            cc_pair_scratch_.resize(2);
-            cc_pair_scratch_[0] = pose_1;
             cc_pair_scratch_[1] = obs_poses_[i][static_cast<std::size_t>(idx)];
             if (instance_->checkCollision(cc_pair_scratch_, true))
             {

@@ -3045,7 +3045,7 @@ bool VampInstance<RobotTs...>::connect(const RobotPose &a,
     start_gathered[idx] = &a;
     goal_gathered[idx] = &b;
 
-    if (kRobotCount == 1)
+    if constexpr (kRobotCount == 1)
     {
         return !checkMotionPack(
             start_gathered,
@@ -3054,8 +3054,10 @@ bool VampInstance<RobotTs...>::connect(const RobotPose &a,
             self,
             std::make_index_sequence<kRobotCount>{});
     }
-
-    return !subsetMotionSwitch(start_gathered, goal_gathered, &idx, 1, step_size, self);
+    else
+    {
+        return !subsetMotionSwitch(start_gathered, goal_gathered, &idx, 1, step_size, self);
+    }
 }
 
 template <typename... RobotTs>
@@ -4038,7 +4040,9 @@ void VampInstance<RobotTs...>::printKnownObjects() const
         print_object_size(obj);
         oss << " attached_to=" << robot_label << " link=" << obj.parent_link << "\n";
     }
-    log(oss.str(), LogLevel::DEBUG);
+    // Explicitly requested diagnostic (Python print_known_objects / error paths):
+    // emit at INFO so it is visible at the default log level.
+    log(oss.str(), LogLevel::INFO);
 }
 
 template <typename... RobotTs>
@@ -4379,7 +4383,7 @@ void VampInstance<RobotTs...>::connectMeshcat()
     catch (const std::exception &ex)
     {
         meshcat_connected_ = false;
-        log(std::string("[meshcat] connection failed: ") + ex.what(), LogLevel::DEBUG);
+        log(std::string("[meshcat] connection failed: ") + ex.what(), LogLevel::WARN);
     }
 }
 
@@ -4508,7 +4512,7 @@ void VampInstance<RobotTs...>::runMeshcatWorker()
         catch (const std::exception &ex)
         {
             meshcat_connected_ = false;
-            log(std::string("[meshcat] async send failed: ") + ex.what(), LogLevel::DEBUG);
+            log(std::string("[meshcat] async send failed: ") + ex.what(), LogLevel::WARN);
         }
     }
 }

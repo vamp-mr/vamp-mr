@@ -783,7 +783,9 @@ bool LegoPrimitive::checkSupportNeeded(const Json::Value &cur_graph_node, int pr
   (void)press_side;
   (void)press_offset;
   (void)task_idx;
-  // Known limitation: stability checking is disabled in the ROS-free build; support is always assumed required here.
+  // Known limitation: stability checking is disabled in the ROS-free build, so
+  // this always reports that no support is needed (callers score such placements
+  // as if they were stable without scaffolding).
   return false;
 }
 
