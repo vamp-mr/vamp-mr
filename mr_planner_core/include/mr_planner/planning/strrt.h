@@ -1,11 +1,11 @@
+// Space-time RRT (ST-RRT*) single-robot planner: grows bidirectional trees in
+// the (configuration x time) space against moving obstacles.
 #ifndef SPACE_TIME_RRT_H
 #define SPACE_TIME_RRT_H
 
 #include "mr_planner/planning/SingleAgentPlanner.h"
 #include "mr_planner/core/graph.h"
 
-// Example of a concrete planner class that implements the AbstractPlanner interface
-// This is where you would implement specific planning algorithms
 class STRRT : public SingleAgentPlanner {
 public:
     STRRT(std::shared_ptr<PlanInstance> instance,

@@ -1,3 +1,7 @@
+// Abstract planning-scene interface (PlanInstance) that every collision/kinematics
+// backend implements, plus the scene-object types (Object, RobotMode) and the
+// per-robot trajectory container (RobotTrajectory / MRTrajectory) shared by all
+// planners and execution graphs.
 #ifndef MR_PLANNER_INSTANCE_H
 #define MR_PLANNER_INSTANCE_H
 
@@ -38,6 +42,9 @@
 
 // Abstract base class for the planning scene interface
 
+/// A collision object in the planning scene. Carries the object's mode
+/// (static / attached to a robot / supported / mid-handover), its world or
+/// attachment pose, and its collision geometry (box, sphere, cylinder, or mesh).
 struct Object  {
     template<class Archive>
     void serialize(Archive & ar, const unsigned int version)
@@ -100,6 +107,9 @@ struct Object  {
     std::string mesh_path;
 };
 
+/// Manipulation mode of a robot at a point in a plan: moving freely, carrying an
+/// attached object, or holding an object in place (e.g. for a handover), together
+/// with the object and end-effector link involved.
 struct RobotMode {
 
     enum Type {
@@ -125,6 +135,10 @@ struct RobotMode {
 };
 
 
+/// Timed joint-space trajectory for a single robot: waypoints (`trajectory`),
+/// their timestamps (`times`), and the activity id each waypoint belongs to
+/// (`act_ids`, used by task-level planning). `cost` and the counters are
+/// planner statistics.
 struct RobotTrajectory
 {
     template <class Archive>
@@ -146,8 +160,10 @@ struct RobotTrajectory
     int num_nodes_expanded{0};
 };
 
+/// A multi-robot solution: one RobotTrajectory per robot, indexed by robot id.
 using MRTrajectory = std::vector<RobotTrajectory>;
 
+/// A colliding link pair reported by PlanInstance::debugCollidingLinks.
 struct LinkCollision
 {
     int robot_a{-1};
@@ -181,6 +197,13 @@ namespace std {
     };
 }
 
+/// Abstract planning-scene interface: the contract between the planners /
+/// execution graphs and a concrete collision + kinematics backend (e.g. the
+/// SIMD-accelerated VampInstance, or a MoveIt-based instance in the ROS build).
+/// It owns the scene description (robots, start/goal poses, movable objects)
+/// and exposes collision checking, distance/interpolation/steering in composite
+/// configuration space, sampling, and scene editing (attach/detach, point clouds,
+/// scene snapshots).
 class PlanInstance {
 public:
     using Point3f = std::array<float, 3>;
@@ -212,6 +235,9 @@ public:
                 std::shared_ptr<VoxelGrid> grid) { throw std::runtime_error("Not implemented");};
     virtual bool testVoxelCollisionCheck(const std::vector<RobotPose> &poses, std::shared_ptr<VoxelGrid> grid)
         { throw std::runtime_error("Not implemented");};
+    /// Check a composite configuration (one pose per active robot) for collision.
+    /// Returns true if in collision. `self` additionally checks robot-environment
+    /// and self collisions (not just robot-robot).
     virtual bool checkCollision(const std::vector<RobotPose> &poses, bool self, bool debug=false) = 0;
 
     // Returns true as soon as any interpolated waypoint along the motion is found in collision.
@@ -220,29 +246,53 @@ public:
                                        const std::vector<RobotPose> &goal,
                                        double step_size,
                                        bool self=false);
+    /// Check a synchronized multi-robot trajectory waypoint-by-waypoint.
+    /// Returns true if any timestep is in collision.
     virtual bool checkMultiRobotTrajectory(const MRTrajectory &trajectory,
                                            bool self=false);
+    /// Check a multi-robot trajectory by sweeping each robot's motion between
+    /// consecutive waypoints (backend-accelerated). Returns true on collision.
     virtual bool checkMultiRobotSweep(const MRTrajectory &trajectory,
                                       bool self=false) = 0;
+    /// Step size that splits the start->goal motion into `num_samples` segments
+    /// of equal composite-space distance.
     double computeMotionStepSize(const std::vector<RobotPose> &start,
                                  const std::vector<RobotPose> &goal,
                                  int num_samples) const;
+    /// Configuration-space distance between two poses of the same robot.
     virtual double computeDistance(const RobotPose& a, const RobotPose &b) const = 0;
+    /// Absolute difference along a single joint dimension `dim`.
     virtual double computeDistance(const RobotPose& a, const RobotPose &b, int dim) const = 0;
+    /// True if the straight-line motion a->b is collision free when checked
+    /// every `col_step_size` in configuration space (single robot).
     virtual bool connect(const RobotPose& a, const RobotPose& b, double col_step_size = 0.1, bool debug=false) = 0;
+    /// Extend from `a` toward `b` by at most `max_dist` (RRT-style): the
+    /// candidate is written to `result` and true is returned only if the
+    /// motion from `a` to it is collision free.
     virtual bool steer(const RobotPose& a, const RobotPose& b, double max_dist,  RobotPose& result, double col_step_size = 0.1) = 0;
+    /// Sample a random configuration for the robot identified by `pose.robot_id`.
     virtual bool sample(RobotPose &pose) = 0;
     virtual double getVMax(int robot_id);
     virtual void setVmax(double vmax);
     virtual void setRandomSeed(unsigned int seed) { (void)seed; }
+    /// Linear interpolation between two poses of the same robot at fraction `t` in [0, 1].
     virtual RobotPose interpolate(const RobotPose &a, const RobotPose&b, double t) const = 0;
+    /// Interpolated value of joint dimension `dim` at fraction `t`.
     virtual double interpolate(const RobotPose &a, const RobotPose&b, double t, int dim) const = 0;
+    /// Add a movable object to the scene (by value; keyed by obj.name).
     virtual void addMoveableObject(const Object& obj) { throw std::runtime_error("Not implemented");};
+    /// Update the pose/state of an existing scene object.
     virtual void moveObject(const Object& obj) { throw std::runtime_error("Not implemented");};
+    /// Remove an object from the scene.
     virtual void removeObject(const std::string& name) { throw std::runtime_error("Not implemented");};
+    /// Set the current (resting) configuration of a robot in the scene, used
+    /// when checking other robots against inactive ones.
     virtual void moveRobot(int robot_id, const RobotPose& pose) { throw std::runtime_error("Not implemented");};
+    /// Rigidly attach object `name` to `link_name` of `robot_id`; the grasp
+    /// transform is computed from the robot's pose at the moment of attachment.
     virtual void attachObjectToRobot(const std::string &name, int robot_id, const std::string &link_name, const RobotPose &pose) { throw std::runtime_error("Not implemented");};
     virtual void setRobotBaseTransform(int robot_id, const Eigen::Isometry3d &transform) {}
+    /// Detach an object and place it statically at the pose implied by the robot pose.
     virtual void detachObjectFromRobot(const std::string& name, const RobotPose &pose) { throw std::runtime_error("Not implemented");};
     virtual void setObjectColor(const std::string &/*name*/, double /*r*/, double /*g*/, double /*b*/, double /*a*/) {}
     virtual Eigen::Vector3d getEndEffectorPositionFromPose(const RobotPose &pose) const = 0;
@@ -250,8 +300,12 @@ public:
     virtual void resetScene(bool reset_sim) = 0;
     virtual void plotEE(const RobotPose& pose, int marker_id) {throw std::runtime_error("Not implemented");};
     virtual void setPadding(double padding) {throw std::runtime_error("Not implemented");};
+    /// Allow or forbid collisions between an object and a robot link (ACM-style override).
     virtual bool setCollision(const std::string& obj_name, const std::string& link_name, bool allow) { throw std::runtime_error("Not implemented");};
     virtual void printKnownObjects() const { throw std::runtime_error("Not implemented");};
+    /// Install an environment point cloud used as collision geometry.
+    /// r_min/r_max bound the query sphere radii the acceleration structure
+    /// supports; r_point is the radius assigned to each point.
     virtual void setPointCloud(const PointCloud &/*points*/,
                                float /*r_min*/,
                                float /*r_max*/,
@@ -259,6 +313,9 @@ public:
     virtual void clearPointCloud() { throw std::runtime_error("Not implemented"); }
     virtual bool hasPointCloud() const { return false; }
     virtual std::size_t pointCloudSize() const { return 0; }
+    /// Remove points that lie within `padding` of any robot body (at the given
+    /// poses) or attached object, so a live sensor cloud does not collide with
+    /// the robots themselves.
     virtual PointCloud filterSelfFromPointCloud(const PointCloud &/*points*/,
                                                 const std::vector<RobotPose> &/*poses*/,
                                                 float /*padding*/) const
@@ -266,6 +323,8 @@ public:
         throw std::runtime_error("Not implemented");
     }
 
+    /// Monotonic counter bumped on every scene mutation; lets cached structures
+    /// (e.g. roadmaps) detect that the environment changed.
     virtual std::uint64_t environmentVersion() const { return environment_version_.load(); }
     // Save/restore full planning scene snapshots
     virtual void pushScene() { throw std::runtime_error("Not implemented"); };

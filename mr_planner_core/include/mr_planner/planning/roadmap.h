@@ -1,3 +1,7 @@
+// Per-robot roadmap construction and storage: a SPARS-style sparse roadmap plus
+// an optional dense PRM* graph, together with hash-map caches of pairwise
+// collision-check results (vertex-vertex, edge-edge, vertex-edge) that are
+// shared across planner invocations and serializable via boost.
 #ifndef MR_PLANNER_ROADMAP_H
 #define MR_PLANNER_ROADMAP_H
 
@@ -40,6 +44,7 @@ struct RobotPose {
 };
 */
 
+/// A* search node for shortest-path queries on the roadmap graph.
 struct AStar {
     std::shared_ptr<Vertex> vertex;
     std::shared_ptr<AStar> parent;
@@ -56,6 +61,7 @@ struct AStar {
     AStar() : vertex(nullptr), g(0), h(0), parent(nullptr) {}
 };
 
+/// Min-heap ordering for AStar nodes by f = g + h.
 class CompareAStar {
 public:
     bool operator()(const AStar &a, const AStar &b) {
@@ -63,6 +69,7 @@ public:
     }
 };
 
+/// Min-heap ordering for (cost, vertex) pairs by cost.
 class CompareEdge {
 public:
     bool operator()(const std::pair<double, std::shared_ptr<Vertex>> &a, const std::pair<double, std::shared_ptr<Vertex>> &b) {
@@ -70,10 +77,15 @@ public:
     }
 };
 
+/// Builds and stores the roadmap for a single robot: a SPARS-style sparse
+/// spanner and an optional dense PRM* graph, plus thread-safe cached results
+/// of pairwise collision checks reused across planning queries. Serializable
+/// with boost so roadmaps and their caches can be saved to disk and reloaded.
 class RoadMap {
 public:
     RoadMap(std::shared_ptr<PlanInstance> instance, int robot_id);
 
+    /// Re-attach a plan instance (e.g. after deserialization).
     void setInstance(std::shared_ptr<PlanInstance> instance);
 
     void setBuildEnabled(bool enabled);
@@ -83,14 +95,19 @@ public:
     void setNumSamples(int num_samples) { num_samples_ = num_samples; }
     void setMaxDist(double max_dist) { max_dist_ = max_dist; }
 
+    /// Sample configurations and construct the sparse roadmap (and PRM* graph).
     void buildRoadmap();
 
+    /// Sample a collision-free configuration for this robot; returns false on failure.
     bool sampleConditionally(std::shared_ptr<Vertex> &new_sample);
 
+    /// Check that the straight-line motion between two vertices is collision-free.
     bool validateMotion(const std::shared_ptr<Vertex> &u, const std::shared_ptr<Vertex> &v);
 
+    /// Check whether two vertices are in the same connected component of the roadmap.
     bool connected(const std::shared_ptr<Vertex> &u, const std::shared_ptr<Vertex> &v);
 
+    /// Return the underlying sparse roadmap graph.
     std::shared_ptr<Graph> getRoadmap();
 
     void updateVertexCollisionMap(const std::pair<RobotPose, RobotPose> &vertex_pair, bool collision);

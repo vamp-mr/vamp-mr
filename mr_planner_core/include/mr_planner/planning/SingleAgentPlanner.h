@@ -1,3 +1,6 @@
+// Abstract base class for single-robot planners (RRT, RRT-Connect, PRM, SIPP-RRT)
+// plus the PlannerOptions/Constraint types shared across planners. Single-agent
+// planners are composed by the multi-robot planners in planner.h (CBS, priority).
 #ifndef SINGLE_AGENT_PLANNER_H
 #define SINGLE_AGENT_PLANNER_H
 
@@ -88,9 +91,7 @@ public:
     virtual bool plan(const PlannerOptions &options, const MRTrajectory &other_solutions, double &lower_bound)
         {throw std::runtime_error("Not implemented"); return false;};
 
-    // Retrieve the plan (if needed, depending on your design, this could return a path, a series of actions, etc.)
-    // For simplicity, this could return a boolean indicating success for now,
-    // but you might want to define a more complex structure for the plan itself.
+    // Retrieve the resulting plan; returns true on success.
     virtual bool getPlan(RobotTrajectory &solution) const = 0;
 
     virtual double getPlanCost() const = 0;

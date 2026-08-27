@@ -53,7 +53,6 @@ void RoadMap::buildRoadmap() {
                 updateRepresentitiveForAll(roadmap_->vertices.back());
             }
         }
-        // std::cout << "Sampled and processed one configuration. Roadmap size: " << roadmap_->size << '\n';
         // Report progress for every 100 samples
         if(roadmap_->size % 100 == 0 && roadmap_->size > 0) {
             std::cout << "SPARS Roadmap size: " << roadmap_->size << ", Failures: " << failures << std::endl;
@@ -129,14 +128,8 @@ void RoadMap::buildRoadmap() {
                 if (validateMotion(sample, neighbor) && roadmap_->getNeighbors(neighbor).size() < roadmap_->num_neighbors) {
                     roadmap_->addEdge(sample, neighbor);
                     k--;
-                    //std::cout << "Adding edge between " << sample->id << " and " << neighbor->id << std::endl;
                 }
             }
-            //std::cout << "# of neighbors: " << roadmap_->getNeighbors(sample).size() << std::endl;
-            //instance_->plotEE(newSample->pose, roadmap_->size);
-
-            //if (roadmap_->size % 10 == 0)
-            //    std::cout << "Roadmap size: " << roadmap_->size << std::endl;
 
             kd_tree.insert(KDEntry{sample, query_key});
         }
@@ -234,7 +227,6 @@ bool RoadMap::addInterface(const std::shared_ptr<Vertex> &new_sample, const std:
 bool RoadMap::addShortcut(const std::shared_ptr<Vertex> &new_sample, const std::vector<std::shared_ptr<Vertex>> &visible_guards) {
     auto v = computeRepresentitive(new_sample->pose);
     if(v == nullptr) {
-        std::cout << "No valid representitve found, this should be a bug.\n";
         return false;
     }
     std::shared_ptr<Vertex> q;
@@ -253,7 +245,6 @@ bool RoadMap::addShortcut(const std::shared_ptr<Vertex> &new_sample, const std::
             representitives.push_back(r);
         }
     }
-    std::cout << "Found " << representitives.size() << " representitives to check for shortcutting.\n";
 
     bool added = false;
     for(const auto &v1 : representitives) {
@@ -265,13 +256,9 @@ bool RoadMap::addShortcut(const std::shared_ptr<Vertex> &new_sample, const std::
                 continue;
             }
 
-            std::cout << "Trying to shortcut between representitives.\n";
             auto pi_s = max_spanner_path(v, v1, v2);
-            std::cout << "Max spanner path length: " << pi_s.size() << "\n";
             auto support_poses = interface_support(v, v2);
-            std::cout << "Found " << support_poses.size() << " support poses for the interface.\n";
             auto pi_d = computeShortestPath(new_sample, support_poses);
-            std::cout << "Shortest path length: " << pi_d.size() << "\n";
             double len_s = 0;
             for(int i = 1; i < pi_s.size(); i++) {
                 len_s += instance_->computeDistance(pi_s[i-1]->pose, pi_s[i]->pose);
@@ -283,18 +270,14 @@ bool RoadMap::addShortcut(const std::shared_ptr<Vertex> &new_sample, const std::
 
             if(t * len_d < len_s) {
                 if(connect(v1->pose, v2->pose)) {
-                    std::cout << "Successfully connected " << v1->id << " and " << v2->id << " in the roadmap.\n";
                     roadmap_->addEdge(v1, v2);
                     PoseEdgeUndirected edge(v1->pose, v2->pose);
                     updateEdgeOpeningMap(edge, true);
                 } else {
-                    std::cout << "Could not connect " << v1->id << " and " << v2->id << " directly, adding the shortcut path instead.\n";
                     // Add the path v1 -> pi_d -> v2 to the roadmap
                     addPath(v1, pi_d, v2);
                 }
                 added = true;
-            } else {
-                std::cout << "No shortcut found between " << v1->id << " and " << v2->id << ".\n";
             }
         }
     }
@@ -315,7 +298,6 @@ std::shared_ptr<Vertex> RoadMap::computeRepresentitive(const RobotPose &pose) {
             min_dist = dist;
             representitive = vertex;
         }
-        // std::cout << "Iteration " << &vertex - &roadmap_->vertices[0] << " out of " << roadmap_->vertices.size() << " in computeRepresentitive.\n";
     }
     if(representitive != nullptr) {
         updateRepresentitiveMap(pose, representitive);
@@ -346,12 +328,10 @@ bool RoadMap::share_interface(const std::shared_ptr<Vertex> &u, const std::share
             auto r1 = computeRepresentitive(densemap_vertices[i]->pose);
             auto r2 = computeRepresentitive(densemap_vertices[j]->pose);
             if((r1 == u && r2 == v) || (r1 == v && r2 == u)) {
-                std::cout << "Yes!\n";
                 return true;
             }
         }
     }
-    std::cout << "Unfortunately no.\n";
     return false;
 }
 
@@ -493,8 +473,6 @@ void RoadMap::connectAllEdges() {
     int n = roadmap_->vertices.size();
 
     for (int i = 0; i < n; i++) {
-        if(i % 10 == 0)
-            std::cout << "Connecting edges for vertex " << i << std::endl;
         auto sample = roadmap_->vertices[i];
 
         // Find k nearest
@@ -577,11 +555,8 @@ void RoadMap::buildRoadmap() {
                 if (validateMotion(sample, neighbor) && roadmap_->getNeighbors(neighbor).size() < k) {
                     roadmap_->addEdge(sample, neighbor);
                     k--;
-                    //std::cout << "Adding edge between " << sample->id << " and " << neighbor->id << std::endl;
                 }
             }
-            //std::cout << "# of neighbors: " << roadmap_->getNeighbors(sample).size() << std::endl;
-            //instance_->plotEE(newSample->pose, roadmap_->size);
 
             if (roadmap_->size % 10 == 0)
                 std::cout << "Roadmap size: " << roadmap_->size << std::endl;

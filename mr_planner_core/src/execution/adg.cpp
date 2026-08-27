@@ -126,15 +126,6 @@ bool ShortcutSamplerADG::sampleUniform(Shortcut &shortcut) {
     int act_length = 0;
     shortcut.activity = act_graph_->get(i, act_id);
 
-    // for (int j = 0; j <= act_id; j++) {
-    //     act_length += act_lengths_[i][j];
-    // }
-
-    // if (startNode >= act_length - 2) {
-    //     return false;
-    // }
-    // int length = std::rand() % (act_length - startNode - 2) + 2;
-    // int endNode = p_ + length;
     for (int j = 0; j < act_id; j++) {
         act_length += act_lengths_[i][j];
     }
@@ -209,11 +200,9 @@ void ShortcutIteratorADG::init(const std::vector<NodePtr> &start_nodes,
                     q_j.push(node_i->Type1Next);
                 }
                 rob_seg_idx.push(std::make_pair(i, seg_id));
-                std::cout << node_i->timeStep << " " << seg_nodes_[i][seg_id*2+1]->timeStep << "\n";
-            }   
+            }
         }
     }
-    std::cout << "finished initializing shortcut iterator\n";
 }
 
 bool ShortcutIteratorADG::step_begin(Shortcut &shortcut) {
@@ -248,8 +237,6 @@ bool ShortcutIteratorADG::step_begin(Shortcut &shortcut) {
        
     }
     else {
-        //std::cout << "robot " << robot_id << " seg " << seg_id << " " 
-        //    << node_i->timeStep << " " << node_j->timeStep << " " << seg_end->timeStep << "\n";
         if (node_j->timeStep >= seg_end->timeStep) {
             if (node_i->timeStep < seg_end->timeStep - 1) {
                 q_i.push(node_i->Type1Next);
@@ -579,7 +566,6 @@ bool ADG::addTaskDeps() {
     // add task dependencies type 2 edges
     idType2Edges_ = 10000;
     for (int i = 0; i < num_robots_; i++) {
-        std::cout << "robot " << i << " num activities " << act_graph_->num_activities(i) << "\n";
         for (int act_id = 0; act_id < act_graph_->num_activities(i); act_id++) {
             std::shared_ptr<const Activity> act = act_graph_->get(i, act_id);
             if (act == nullptr) {
@@ -602,7 +588,6 @@ bool ADG::addTaskDeps() {
                 cur_start_node->Type2Prev.push_back(edge);
             }
 
-            //if (act->type != 2 || act->type != 3 || act->type != 5 || act->type != 8 || act->type != 9 || act->type != 11) {
                 if (config_.sync_task && act_id > 0) {
                     // enforce that tasks are executed synchronously by adding type2 dependencies
                     auto cur_start_node = intermediate_nodes_[i][act_id * 2];
@@ -628,8 +613,7 @@ bool ADG::addTaskDeps() {
                         
                     }
                 }
-            //}
-        } 
+        }
     }
     return true;
 }
@@ -657,14 +641,6 @@ bool ADG::findCollisionDeps(std::shared_ptr<PlanInstance> instance, const std::v
                 auto act_i_start_node = intermediate_nodes_[i][act_id_i * 2];
                 auto act_i_end_node = intermediate_nodes_[i][act_id_i * 2 + 1];
 
-                // // run bfs on the task graph
-                // std::vector<std::vector<bool>> visited;
-                // for (int k = 0; k < num_robots_; k++) {
-                //     visited.push_back(std::vector<bool>(act_graph_->num_activities(i), false));
-                // }
-                // act_graph_->bfs(act_i, visited, true);
-                // act_graph_->bfs(act_i, visited, false);
-
                 auto tic = std::chrono::high_resolution_clock::now();
                 // run bfs on the node graph
                 std::vector<std::vector<bool>> visited;
@@ -680,10 +656,6 @@ bool ADG::findCollisionDeps(std::shared_ptr<PlanInstance> instance, const std::v
                 for (int act_id_j = 0; act_id_j < act_graph_->num_activities(j); act_id_j++) {
                     // updated attached / detached object
                     auto act_j = act_graph_->get(j, act_id_j);
-                    // if (visited[j][act_id_j]) {
-                    //     // skip if the two activities are dependent
-                    //     continue;
-                    // }
                     auto act_j_start_node = intermediate_nodes_[j][act_id_j * 2];
                     auto act_j_end_node = intermediate_nodes_[j][act_id_j * 2 + 1];
 
@@ -1474,19 +1446,7 @@ void ADG::checkShortcuts(std::shared_ptr<PlanInstance> instance, Shortcut &short
     }
 
     int shortcutSteps = shortcut.path.size() + 2;
-    // for (int i = 1; i < shortcutSteps - 1; i++) {
-    //     RobotPose pose_i = shortcut.path[i - 1];
 
-    //     // check environment collision
-    //     if (instance->checkCollision({pose_i}, false) == true) {
-    //         if (config_.print_contact) {
-    //             instance->checkCollision({pose_i}, false, true);
-    //         }
-    //         shortcut.col_type = CollisionType::STATIC; // collide with the evnrionment
-    //         return;
-    //     }
-    // }
-    
     MRTrajectory trajectory(1);
     trajectory[0].robot_id = robot_id;
     trajectory[0].trajectory = shortcut.path;
@@ -1594,12 +1554,6 @@ void ADG::checkShortcuts(std::shared_ptr<PlanInstance> instance, Shortcut &short
         shortcut.col_type = CollisionType::NONE;
         return;
     }
-
-    // for (int j = 0; j < num_robots_; j++) {
-    //     Eigen::MatrixXi col_matrix_j(shortcutSteps, numNodes_[j]);
-    //     col_matrix_j.setZero();
-    //     col_matrix.push_back(col_matrix_j);
-    // }
 
     auto t_bfs = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - tic).count();
 
@@ -1949,13 +1903,6 @@ bool ADG::replanRecovery(const NodePtr &startNode, NodePtr &endNode) {
     for (auto &cut : cut_nodes) {
         int rid = cut->robotId;
         int r_cur_node_id = executed_steps_[rid]->load();
-        // NodePtr r_cur_node = start_nodes_[rid];
-        // while (r_cur_node->timeStep != r_cur_node_id && r_cur_node != nullptr) {
-        //     r_cur_node = r_cur_node->Type1Next;
-        // }
-        // if (r_cur_node == nullptr) {
-        //     log("Error reading current node for robot " + std::to_string(rid) + " at timestep " + std::to_string(r_cur_node_id), LogLevel::ERROR);
-        // }
 
         NodePtr iter_node = cut;
         NodePtr iter_end_node_i = recovery_nodes.back().back();

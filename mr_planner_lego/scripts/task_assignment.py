@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""Solve dual-arm LEGO assembly task assignment as an integer program (PuLP):
+assigns each assembly step a robot and grasp offset from per-robot cost/support
+matrices and writes the assignment into the task config JSON."""
 
 import pulp
 import numpy as np

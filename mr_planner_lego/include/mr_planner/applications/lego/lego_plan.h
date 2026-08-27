@@ -1,3 +1,6 @@
+// Single-robot segment planning for LEGO assembly tasks: wraps the internal
+// RRT-Connect planner (VAMP- or MoveIt-backed PlanInstance), treating the
+// other robots' joint states as static obstacles. ROS/MoveIt-free.
 #ifndef LEGO_PLAN_H
 #define LEGO_PLAN_H
 

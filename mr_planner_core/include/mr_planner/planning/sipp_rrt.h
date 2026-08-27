@@ -1,3 +1,6 @@
+// SIPP-RRT: single-robot RRT over safe intervals (Safe Interval Path Planning)
+// against moving obstacles given by other robots' committed trajectories; used
+// by the prioritized planner backend.
 #ifndef SIPP_RRT_H
 #define SIPP_RRT_H
 
@@ -5,8 +8,6 @@
 #include "mr_planner/core/graph.h"
 #include "mr_planner/planning/nn_kdtree.h"
 
-// Example of a concrete planner class that implements the AbstractPlanner interface
-// This is where you would implement specific planning algorithms
 class SIPP_RRT : public SingleAgentPlanner {
 public:
     SIPP_RRT(std::shared_ptr<PlanInstance> instance,
@@ -73,6 +74,11 @@ private:
     int moving_obs_steps_ = 0;
     MRTrajectory obstacles_;
     std::vector<std::vector<RobotPose>> obs_poses_; // robot X span_steps
+
+    // Reusable {robot pose, obstacle pose} buffer for the per-timestep collision
+    // checks; avoids allocating a fresh 2-element vector in the inner loops.
+    // (SIPP_RRT is single-threaded; mutable so const methods can reuse it.)
+    mutable std::vector<RobotPose> cc_pair_scratch_;
 
     // random number generator
     std::mt19937 rng_;

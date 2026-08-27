@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""Benchmark VAMP multi-robot collision checking from Python: times sampled
+pose and motion collision queries against a VampEnvironment and prints JSON
+throughput statistics."""
 
 import argparse
 import json

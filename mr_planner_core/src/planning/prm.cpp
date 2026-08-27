@@ -55,10 +55,10 @@ std::uint64_t PRM::nextSalt() {
  */
 bool PRM::init(const PlannerOptions &options) {
     if (robot_id_ < 0 || robot_id_ >= instance_->getNumberOfRobots()) {
-        std::cout << "Invalid robot id: " << robot_id_ << std::endl;
+        log("Invalid robot id: " + std::to_string(robot_id_), LogLevel::ERROR);
     }
     if(!instance_) {
-        std::cout << "Instance not set" << std::endl;
+        log("Instance not set", LogLevel::ERROR);
     }
 
     num_samples_ = options.num_samples;
@@ -111,7 +111,7 @@ bool PRM::updateRoadmap(const PlannerOptions &options) {
         solution_.times.push_back(0.0);
         solution_.trajectory.push_back(goal_pose_);
         solution_.cost = 0.0;
-        std::cout << "Failed to initialize PRM" << std::endl;
+        log("Failed to initialize PRM", LogLevel::WARN);
         return false;
     }
     if(swapped_) {
@@ -131,7 +131,6 @@ bool PRM::updateRoadmap(const PlannerOptions &options) {
     goal_id_ = goal->id;
     auto sample_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> sample_time = sample_end - sample_begin;
-    // std::cout << "Sample start/goal time: " << sample_time.count() << '\n';
 
     rrt_sample_time_ = std::chrono::duration<double>::zero();
     if (!startAndGoalConnected()) {
@@ -150,13 +149,7 @@ bool PRM::updateRoadmap(const PlannerOptions &options) {
     computeHeuristic(options);
     auto heu_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> heu_time = heu_end - heu_begin;
-    // std::cout << "Heuristic computation time: " << heu_time.count() << '\n';
     return true;
-    // visualizeRoadmap();
-    // Pause for 300 seconds to allow for visualization
-    // std::cout << "Sleeping for 300 seconds to allow for visualization..." << std::endl;
-    // std::this_thread::sleep_for(std::chrono::seconds(300));
-    // return false;
 }
 
 bool PRM::sampleConditionally(std::shared_ptr<Vertex> &new_sample) {
@@ -167,7 +160,6 @@ bool PRM::sampleConditionally(std::shared_ptr<Vertex> &new_sample) {
 
     while (!found_sample && tries < max_tries) {
         tries++;
-        //log("sample tries: " + std::to_string(tries), LogLevel::DEBUG);
         found_sample = instance_->sample(newpose);
         if (!found_sample) {
             continue;
@@ -185,7 +177,6 @@ void PRM::reSampling(const PlannerOptions &options) {
         log("RRT sampling failed for robot " + std::to_string(robot_id_), LogLevel::WARN);
         return;
     }
-    // computeHeuristic(options);
     log("Added RRT path to roadmap for robot " + std::to_string(robot_id_), LogLevel::INFO);
 }
 
@@ -248,12 +239,6 @@ void PRM::computeHeuristic(const PlannerOptions &options) {
 
         auto nbrs_set = roadmap_->getNeighbors(vertex);
         for (auto neighbor : nbrs_set) {
-            // PoseEdgeUndirected edge(vertex->pose, neighbor->pose);
-            // const auto &edge_opening_map = roadmap_obj_->queryEdgeOpeningMap();
-            // if(!dense_roadmap_ && edge_opening_map.find(edge) != edge_opening_map.end() && !edge_opening_map.at(edge)) {
-            //     continue;
-            // }
-            // double new_dist = d + max_dist_;
             double new_dist = d + max_dist_;
 
             if (new_dist < dist[neighbor->id]) {
@@ -266,7 +251,6 @@ void PRM::computeHeuristic(const PlannerOptions &options) {
 }
 
 bool PRM::startAndGoalConnected() {
-    // return heuristic_[roadmap_->vertices[start_id_]->id] != std::numeric_limits<double>::max();
     return roadmap_->inSameComponent(roadmap_->vertices[start_id_], roadmap_->vertices[goal_id_]);
 }
 
@@ -277,25 +261,21 @@ void PRM::buildRoadmap(const PlannerOptions &options) {
     max_dist_ = options.max_dist;
     num_samples_ = options.num_samples;
     roadmap_ = std::make_shared<Graph>();
-    std::vector<std::shared_ptr<Vertex>> neighbors;
 
     //add vertices and edges
     RobotPose newpose = instance_->initRobotPose(robot_id_);
     while (roadmap_->size < num_samples_ - 2) {
-        //RobotPose newpose = instance_->initRobotPose(robot_id_);
         if (instance_->sample(newpose)) {
-            
+
             auto sample = roadmap_->addVertex(newpose);
-            neighbors.clear();
-            neighbors = roadmap_->vertices;
-            
-            for (auto neighbor: neighbors) {
+            // Iterate the vertex list directly (addEdge only mutates adjacency,
+            // never the vertex vector). The self-pair is rejected by pose equality
+            // inside validateMotion.
+            for (const auto &neighbor : roadmap_->vertices) {
                 if (validateMotion(sample, neighbor)) {
                     roadmap_->addEdge(sample, neighbor);
                 }
             }
-            //if(roadmap_->size % 10 == 0)
-            //    std::cout << "Roadmap size: " << roadmap_->size << std::endl;
         }
 
     }
@@ -463,7 +443,6 @@ bool PRM::searchPath(const PlannerOptions &options) {
     };
 
     auto push_to_open = [&](const NodePtr &node) {
-        // remove_from_open(node);
         node->in_open = true;
         open_set.insert(node);
     };
@@ -512,7 +491,7 @@ bool PRM::searchPath(const PlannerOptions &options) {
         return constraint.type == ConstraintType::VERTEX && constraint.robot_id == robot_id_ && constraint.pose == start_pose_ && constraint.time == 0;
     });
     if (invalid_start_constraint) {
-        std::cout << "Start pose is in collision with constraint\n";
+        log("Start pose is in collision with constraint", LogLevel::WARN);
         return false;
     }
 
@@ -587,12 +566,6 @@ bool PRM::searchPath(const PlannerOptions &options) {
             solution_.num_col_checks = num_col_checks_;
 
             lower_bound_ = min_f_val;
-            // NodePtr next_best = peek_open();
-            // if (!next_best) {
-            //     lower_bound_ = current->g;
-            // } else {
-            //     lower_bound_ = next_best->g + heuristic_[next_best->vertex->id];
-            // }
 
             auto current_time = std::chrono::high_resolution_clock::now();
             low_level_time_ = current_time - start_time_;
@@ -649,8 +622,6 @@ bool PRM::searchPath(const PlannerOptions &options) {
                 continue;
             }
 
-            //candidate->num_conflicts = checkNumConflicts(*current, *neighbor_node, tentative_g, options);
-            
             focal_timer = std::chrono::high_resolution_clock::now();
 
             NodeKey key = make_key(neighbor_vertex, next_timestep);
@@ -737,13 +708,13 @@ void PRM::swapStartGoal() {
 bool PRM::checkIsMakeSpan(const PlannerOptions &options) {
     bool isMakeSpan = true;
     double this_cost = 0;
-    for(auto other_solution : other_solutions_) {
+    for(const auto &other_solution : other_solutions_) {
         if(other_solution.robot_id == robot_id_) {
             this_cost = other_solution.times.back();
             break;
         }
     }
-    for(auto other_solution : other_solutions_) {
+    for(const auto &other_solution : other_solutions_) {
         if(other_solution.robot_id == robot_id_) {
             continue;
         }
@@ -760,7 +731,7 @@ void PRM::findCostRange(const PlannerOptions &options, double &minCost, double &
     double min_cost = -1;
     double max_cost = std::numeric_limits<double>::max();
     staticCostThresh = 0;
-    for(auto constraint : options.constraints) {
+    for(const auto &constraint : options.constraints) {
         if(constraint.robot_id != robot_id_) {
             continue;
         }
@@ -784,7 +755,7 @@ void PRM::findCostRange(const PlannerOptions &options, double &minCost, double &
 
 bool PRM::checkConstraints(const AStarNode &current, const PlannerOptions &options, bool isMakeSpan) {
     bool valid = true;
-    for (auto constraint : options.constraints) {
+    for (const auto &constraint : options.constraints) {
         if (constraint.robot_id != robot_id_ && constraint.type != ConstraintType::LEQLENGTH) {
             continue;
         }
@@ -795,36 +766,17 @@ bool PRM::checkConstraints(const AStarNode &current, const PlannerOptions &optio
         if(constraint.isAvoidance) { // avoidance constraint
             if ((constraint.type == ConstraintType::VERTEX && constraint.time == current.g)
                 || (constraint.type == ConstraintType::LEQLENGTH && constraint.time == current.g)){
-                // auto vertex_key = std::make_pair(current.vertex->pose, constraint.pose);
-                // int res = roadmap_obj_->queryVertexCollisionMap(vertex_key);
-                // if(res == 1) {
-                //     valid = false;
-                //     break;
-                // } else if(res == 0) {
-                //     continue;
-                // }
                 num_col_checks_++;
                 auto cc_start = std::chrono::high_resolution_clock::now();
                 bool in_collision = instance_->checkCollision({current.vertex->pose, constraint.pose}, true);
                 collision_check_time_ += std::chrono::high_resolution_clock::now() - cc_start;
                 if(in_collision) {
                     valid = false;
-                    // roadmap_obj_->updateVertexCollisionMap(vertex_key, true);
                     break;
                 }
             } else if((constraint.type == ConstraintType::EDGE && current.parent && constraint.time == current.parent->g) // edge avoidance
                 || (constraint.type == ConstraintType::LEQLENGTH && constraint.time < current.g)) { // or avoid goal
                 int num_interpolations = options.num_interpolations;
-                // PoseEdge edge_i = PoseEdge(current.parent->vertex->pose, current.vertex->pose);
-                // PoseEdge edge_j = PoseEdge(constraint.pose, constraint.to_pose);
-                // auto edge_key = std::make_pair(edge_i, edge_j);
-                // int res = roadmap_obj_->queryEdgeCollisionMap(edge_key);
-                // if(res == 1) {
-                //     valid = false;
-                //     break;
-                // } else if(res == 0) {
-                //     continue;
-                // }
                 num_col_checks_++;
                 const std::vector<RobotPose> motion_start = {constraint.pose, current.parent->vertex->pose};
                 const std::vector<RobotPose> motion_goal = {constraint.to_pose, current.vertex->pose};
@@ -834,11 +786,7 @@ bool PRM::checkConstraints(const AStarNode &current, const PlannerOptions &optio
                 collision_check_time_ += std::chrono::high_resolution_clock::now() - cc_start;
                 if (in_collision) {
                     valid = false;
-                    // roadmap_obj_->updateEdgeCollisionMap(edge_key, true);
-                } 
-                // else {
-                //     roadmap_obj_->updateEdgeCollisionMap(edge_key, false);
-                // }
+                }
             }
         } else { // vertex or edge constraint
             if(constraint.type == ConstraintType::VERTEX && constraint.time == current.g && constraint.pose == current.vertex->pose) {
@@ -898,26 +846,6 @@ int PRM::checkNumConflicts(
         int time_idx = tentative_g / max_dist;
 
         if (time_idx < static_cast<int>(other_solution.times.size())) {
-            // Vertex check
-            // auto vertex_key = std::make_pair(neighbor.vertex->pose,
-            //                                  other_solution.trajectory[time_idx]);
-            // int res_v = roadmap_obj_->queryVertexCollisionMap(vertex_key);
-
-            // // Edge check
-            // PoseEdge edge_i(current.vertex->pose, neighbor.vertex->pose);
-            // PoseEdge edge_j(other_solution.trajectory[time_idx - 1],
-            //                 other_solution.trajectory[time_idx]);
-            // auto edge_key = std::make_pair(edge_i, edge_j);
-            // int res_e = roadmap_obj_->queryEdgeCollisionMap(edge_key);
-
-            // bool results_found = false;
-            // if (res_v == 1) { num_conflicts++; results_found = true; }
-            // if (res_e == 1) { num_conflicts++; results_found = true; }
-            // if (res_v == 0 && res_e == 0) {
-            //     results_found = true;
-            // }
-            // if (results_found) continue;
-
             const std::vector<RobotPose> motion_start = {
                 current.vertex->pose,
                 other_solution.trajectory[time_idx - 1]
@@ -937,34 +865,10 @@ int PRM::checkNumConflicts(
                 auto cc_goal_start = std::chrono::high_resolution_clock::now();
                 const bool goal_collision = instance_->checkCollision(motion_goal, true);
                 collision_check_time_ += std::chrono::high_resolution_clock::now() - cc_goal_start;
-                // if (goal_collision) {
-                //     roadmap_obj_->updateVertexCollisionMap(vertex_key, true);
-                // } else {
-                //     roadmap_obj_->updateEdgeCollisionMap(edge_key, true);
-                // }
-            } 
-            // else {
-            //     roadmap_obj_->updateVertexCollisionMap(vertex_key, false);
-            //     roadmap_obj_->updateEdgeCollisionMap(edge_key, false);
-            // }
+            }
 
         } else {
             // Past trajectory length, check target map
-            // auto vertex_key = std::make_pair(neighbor.vertex->pose,
-            //                                  other_solution.trajectory.back());
-            // int res_v = roadmap_obj_->queryVertexCollisionMap(vertex_key);
-
-            // PoseEdge edge_i(current.vertex->pose, neighbor.vertex->pose);
-            // auto target_key = std::make_pair(other_solution.trajectory.back(), edge_i);
-            // int res_t = roadmap_obj_->queryTargetCollisionMap(target_key);
-            // bool results_found = false;
-            // if (res_v == 1) { num_conflicts++; results_found = true; }
-            // if (res_t == 1) { num_conflicts++; results_found = true; }
-            // if (res_v == 0 && res_t == 0) {
-            //     results_found = true;
-            // }
-            // if (results_found) continue;
-
             const std::vector<RobotPose> motion_start = {
                 current.vertex->pose,
                 other_solution.trajectory.back()
@@ -984,16 +888,7 @@ int PRM::checkNumConflicts(
                 auto cc_goal_start = std::chrono::high_resolution_clock::now();
                 const bool goal_collision = instance_->checkCollision(motion_goal, true);
                 collision_check_time_ += std::chrono::high_resolution_clock::now() - cc_goal_start;
-                // if (goal_collision) {
-                //     roadmap_obj_->updateVertexCollisionMap(vertex_key, true);
-                // } else {
-                //     roadmap_obj_->updateTargetCollisionMap(target_key, true);
-                // }
-            } 
-            // else {
-            //     roadmap_obj_->updateVertexCollisionMap(vertex_key, false);
-            //     roadmap_obj_->updateTargetCollisionMap(target_key, false);
-            // }
+            }
         }
 
     }
@@ -1025,7 +920,6 @@ double PRM::computeEdgeWorkspaceProximityHeuristic(const AStarNode &current,
             Eigen::Vector3d other_ee = instance_->getEndEffectorPositionFromPose(other_pose);
 
             double dist = (interp_ee - other_ee).norm();
-            // std::cout << "dist: " << dist << std::endl;
 
             double score = std::exp(-dist / 2);  // adjust kernel width as needed
             pose_score += score;

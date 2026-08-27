@@ -53,11 +53,6 @@ bool ShortcutSampler::sample(Shortcut &shortcut, double time_progress) {
 bool ShortcutSampler::sampleUniform(Shortcut &shortcut) {
     int i = std::rand() % num_robots_;
     int startNode = std::rand() % numNodes_[i];
-    // if (startNode >= numNodes_[i] - 2) {
-    //     return false;
-    // }
-    // int length = std::rand() % (numNodes_[i] - startNode - 2) + 2;
-    // int endNode = startNode + length;
     int endNode = std::rand() % numNodes_[i];
     if (endNode < startNode) {
         std::swap(startNode, endNode);
@@ -65,9 +60,6 @@ bool ShortcutSampler::sampleUniform(Shortcut &shortcut) {
     if (startNode + 1 >= endNode) {
         return false;
     }
-    // if (endNode <= 1 || startNode >= endNode - 1) {
-    //     return false;
-    // }
 
     shortcut.ni = nodes_[i][startNode];
     shortcut.nj = nodes_[i][endNode];
@@ -75,22 +67,6 @@ bool ShortcutSampler::sampleUniform(Shortcut &shortcut) {
 }
 
 bool ShortcutSampler::sampleComposite(Shortcut &shortcut) {
-
-    // bool success = sampleUniform(shortcut);
-    // if (!success) {
-    //     return false;
-    // }
-    // int robot_id = shortcut.robot_id();
-    // int start_i = shortcut.ni.lock()->timeStep;
-    // int end_i = shortcut.nj.lock()->timeStep;
-    // int start_t = start_i;
-    // while (timed_nodes_[robot_id][start_t]->timeStep < start_i) {
-    //     start_t++;
-    // }
-    // int end_t = std::max(start_t, end_i);
-    // while (timed_nodes_[robot_id][end_t]->timeStep < end_i) {
-    //     end_t++;
-    // }
 
     int robot_id = 0;
     int start_t = std::rand() % timed_nodes_[robot_id].size();
@@ -125,10 +101,6 @@ bool ShortcutSampler::sampleBiased(Shortcut &shortcut) {
     }
     int length = std::rand() % (numNodes_[i] - startNode - 2) + 2;
     int endNode = startNode + length;
-    // if (endNode <= 1 || startNode >= endNode - 1) {
-    //     return false;
-    // }
-
 
     for (int k = 0; k < already_shortcuts_.size(); k++) {
         NodePtr k1 = already_shortcuts_[k].ni.lock();
@@ -504,6 +476,9 @@ bool TPG::init(std::shared_ptr<PlanInstance> instance, const MRTrajectory &solut
 
 bool TPG::findCollisionDeps(std::shared_ptr<PlanInstance> instance, const MRTrajectory &solution,
     const TPGConfig &config) {
+    // Reusable pose-pair buffer for the O(N_i * N_j) type-2-edge sweep; avoids
+    // allocating a fresh 2-element vector per node pair.
+    std::vector<RobotPose> pair_scratch(2);
     for (int i = 0; i < num_robots_; i++) {
         for (int j = 0; j < num_robots_; j++) {
             if (i == j) {
@@ -514,8 +489,13 @@ bool TPG::findCollisionDeps(std::shared_ptr<PlanInstance> instance, const MRTraj
             while (node_i != nullptr) {
                 NodePtr node_j = node_j_start;
                 bool inCollision = false;
+                if (node_j != nullptr && node_j->timeStep < node_i->timeStep) {
+                    // Copy the invariant pose only when the sweep below will run.
+                    pair_scratch[0] = node_i->pose;
+                }
                 while (node_j != nullptr && node_j->timeStep < node_i->timeStep) {
-                    if (instance->checkCollision({node_i->pose, node_j->pose}, true)) {
+                    pair_scratch[1] = node_j->pose;
+                    if (instance->checkCollision(pair_scratch, true)) {
                         inCollision = true;
                     } else if (inCollision) {
                         inCollision = false;
@@ -629,8 +609,13 @@ bool TPG::findCollisionDepsParallel(std::shared_ptr<PlanInstance> instance, cons
                     
                     #pragma omp parallel for if(check_nodes.size() > 10)
                     for (int idx = 0; idx < check_nodes.size(); idx++) {
-                        collision_results[idx] = instance->checkCollision(
-                            {node_i->pose, check_nodes[idx]->pose}, true);
+                        // Per-thread reusable buffer: safe under nested OpenMP and
+                        // avoids a 2-element vector allocation per node pair.
+                        static thread_local std::vector<RobotPose> pair_scratch;
+                        pair_scratch.resize(2);
+                        pair_scratch[0] = node_i->pose;
+                        pair_scratch[1] = check_nodes[idx]->pose;
+                        collision_results[idx] = instance->checkCollision(pair_scratch, true);
                     }
                     
                     // Process results to identify collision transitions
@@ -732,13 +717,6 @@ bool TPG::optimize(std::shared_ptr<PlanInstance> instance, const TPGConfig &conf
             switchShortcuts();
         }
 
-        // trajectory_msgs::JointTrajectory joint_traj;
-        // size_t num_joints = 0;
-        // for (int i = 0; i < num_robots_; i++ ) {
-        //     num_joints += instance->getRobotDOF(i);
-        // }
-        // joint_traj.joint_names.resize(num_joints);
-        // setSyncJointTrajectory(joint_traj, post_shortcut_flowtime_, post_shortcut_makespan_);
         findFlowtimeMakespan(post_shortcut_flowtime_, post_shortcut_makespan_);
         computePathLength(instance);
         smoothness_ = calculate_smoothness(getSyncJointTrajectory(instance), instance);
@@ -747,29 +725,6 @@ bool TPG::optimize(std::shared_ptr<PlanInstance> instance, const TPGConfig &conf
             + " type 2 edges, makespan " + std::to_string(post_shortcut_makespan_) + " s", LogLevel::HLINFO);
         log ("in " + std::to_string(t_shortcut_) + " s, " + std::to_string(num_colcheck_post_) + " col checks.", LogLevel::HLINFO);
     }
-
-    // 5. Print the TPG for debugging purposes
-    // Eigen::MatrixXi col_matrix_ij;
-    // getCollisionCheckMatrix(0, 1, col_matrix_ij);
-    // std::cout << "Collision matrix between 0 and 1" << std::endl;
-    // std::cout << col_matrix_ij << std::endl;
-
-    // for (int i = 0; i < num_robots_; i++) {
-    //     NodePtr node_i = start_nodes_[i];
-    //     while (node_i != nullptr) {
-    //         log("Robot " + std::to_string(i) + " at time " + std::to_string(node_i->timeStep), LogLevel::DEBUG);
-    //         log("Type 1 Next: " + ((node_i->Type1Next != nullptr) ? std::to_string(node_i->Type1Next->timeStep) : ""), LogLevel::DEBUG);
-    //         log("Type 1 Prev: " + ((node_i->Type1Prev != nullptr) ? std::to_string(node_i->Type1Prev->timeStep) : ""), LogLevel::DEBUG);
-    //         for (auto edge : node_i->Type2Next) {
-    //             log("Type 2 Next: " + std::to_string(edge->nodeTo->robotId) + " " + std::to_string(edge->nodeTo->timeStep), LogLevel::DEBUG);
-    //         }
-    //         for (auto edge : node_i->Type2Prev) {
-    //             log("Type 2 Prev: " + std::to_string(edge->nodeFrom->robotId) + " " + std::to_string(edge->nodeFrom->timeStep), LogLevel::DEBUG);
-    //         }
-    //         node_i = node_i->Type1Next;
-    //     }
-
-    // }
 
     return true;
 }
@@ -1221,35 +1176,6 @@ void TPG::preCheckShortcuts(std::shared_ptr<PlanInstance> instance, Shortcut &sh
     }
     
     retimeShortcut(instance, shortcutSteps, shortcut);
-    
-
-    // if (config_.helpful_shortcut) {
-    //     bool helpful = false;
-    //     std::shared_ptr <Node> current = ni->Type1Next;
-    //     while (!helpful && current != nj) {
-    //         if (current->Type2Next.size() > 0) {
-    //             helpful = true;
-    //         }
-    //         current = current->Type1Next;
-    //     }
-    //     current = nj;
-    //     while (!helpful && current != nullptr) {
-    //         if (current->Type2Prev.size() > 0) {
-    //             for (auto edge : current->Type2Prev) {
-    //                 if (edge->nodeFrom->timeStep >= current->timeStep) {
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //         if (current->Type2Next.size() > 0) {
-    //             helpful = true;
-    //         }
-    //         current = current->Type1Next;
-    //     }
-    //     if (!helpful && (current != nullptr)) {
-    //         return false;
-    //     }
-    // }
 
     if (!shortcut.composite() && config_.tight_shortcut) {
         NodePtr current = ni;
@@ -1327,12 +1253,7 @@ void TPG::checkShortcuts(std::shared_ptr<PlanInstance> instance, Shortcut &short
                     comp_poses_prev.push_back(timedNodes[j][t - 1]->pose);
                 }
             }
-            
-            // bool col1 = false, col2 = false;
-            // if (instance->checkCollision(comp_poses, false) == true || instance->checkCollision(comp_poses_prev, true) == true) {
-            //     shortcut.col_type = CollisionType::STATIC; // collide with the env
-            //     col1 = true;
-            // }
+
             if (instance->checkCollision({comp_poses[0]}, false) == true) {
                 shortcut.col_type = CollisionType::STATIC; // collide with the env
                 return;
@@ -1853,7 +1774,8 @@ void TPG::switchShortcuts() {
                                     nodeFrom->Type2Next.erase(std::remove_if(nodeFrom->Type2Next.begin(), nodeFrom->Type2Next.end(), 
                                         [edgeId](std::shared_ptr<type2Edge> e) { return e->edgeId == edgeId; }), nodeFrom->Type2Next.end());
                                     
-                                    // TODO: fix when type2 edges are inconsistent
+                                    // Known limitation: rerouting the type 2 edge here can leave
+                                    // the switched dependencies inconsistent in some edge cases.
 
                                     log("Removed type 2 dependency from Robot " + std::to_string(nodeFrom->robotId) + " at time "
                                         + std::to_string(nodeFrom->timeStep) + " -> Robot " + std::to_string(node_i->robotId) + " at time " 
@@ -2070,15 +1992,6 @@ void TPG::findEarliestReachTime(std::vector<std::vector<int>> &reached_t, std::v
         j++;
     }
 
-    // print all the reached times
-    // std::cout << "Earliest reach time:\n";
-    // for (int i = 0; i < num_robots_; i++) {
-    //     for (int j = 0; j < numNodes_[i]; j++) {
-    //         std::cout << reached_t[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
-
 }
 
 void TPG::findTimedNodes(const std::vector<std::vector<int>> &earliest_t, std::vector<std::vector<NodePtr>> & timed_nodes)
@@ -2165,15 +2078,6 @@ void TPG::findLatestReachTime(std::vector<std::vector<int>> &reached_t, const st
         }
         j--;
     }
-    
-    // print all the reached times
-    // std::cout << "Latest reach time:\n";
-    // for (int i = 0; i < num_robots_; i++) {
-    //     for (int j = 0; j < numNodes_[i]; j++) {
-    //         std::cout << reached_t[i][j] << " ";
-    //     }
-    //     std::cout << std::endl;
-    // }
 }
 
 void TPG::findTightType2Edges(const std::vector<std::vector<int>> &earliest_t, const std::vector<std::vector<int>> &latest_t)
@@ -2261,7 +2165,8 @@ void TPG::transitiveReduction() {
                 NodePtr n_from = node_i;
                 NodePtr n_to = edge->nodeTo;
                 
-                // Remove this edge temporarily
+                // Temporarily remove this edge to test whether it is transitive
+                // (it is re-added below if v is no longer reachable from u without it).
                 int idToRemove = edge->edgeId;
                 n_from->Type2Next.erase(std::remove_if(n_from->Type2Next.begin(), n_from->Type2Next.end(), 
                     [idToRemove](std::shared_ptr<type2Edge> element) {return element->edgeId == idToRemove;}), n_from->Type2Next.end());

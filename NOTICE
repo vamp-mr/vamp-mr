@@ -1,0 +1,26 @@
+VAMP-MR
+Copyright 2026 Philip Huang, Chenrui Gao, Jiaoyang Li
+(Carnegie Mellon University; University of Michigan)
+
+This product includes software developed as part of VAMP-MR, released under the
+Apache License, Version 2.0 (see LICENSE).
+
+This product bundles and/or derives from the following third-party software:
+
+1. VAMP (Vector-Accelerated Motion Planning)
+   https://github.com/KavrakiLab/vamp
+   Licensed under the Apache License, Version 2.0.
+   VAMP-MR ships a MODIFIED version of VAMP as the `vamp/` git submodule
+   (branch `vamp-mr`), adding multi-robot composite collision checking on top
+   of VAMP's per-robot SIMD kernels. The nature of these modifications is
+   described in the VAMP-MR paper and in
+   docs/upstream/vamp-multirobot-proposal.md.
+   The upstream VAMP license is retained at vamp/LICENSE.txt.
+
+2. APEX-MR
+   https://github.com/intelligent-control-lab/APEX-MR
+   Copyright (c) 2025 Intelligent Control Lab.
+   Licensed under the MIT License.
+   Portions of `mr_planner_lego/` (the LEGO assembly manipulation code under
+   `.../applications/lego/`) are derived from APEX-MR and adapted to be
+   ROS-free. The full MIT license text is reproduced in THIRD_PARTY_LICENSES.md.

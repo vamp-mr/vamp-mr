@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""ROS-free LEGO assembly benchmark that runs the mr_planner_lego assign and
+plan CLIs over tasks and seeds, collecting timing and plan-quality metrics
+into a summary CSV."""
 
 import argparse
 import csv

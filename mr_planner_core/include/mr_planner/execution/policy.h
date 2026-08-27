@@ -1,11 +1,20 @@
+// Execution policies for non-motion ADG nodes (e.g. gripper open/close) and
+// hooks for failure recovery: selecting a recovery skill, finding a recovery
+// goal, and planning recovery trajectories. GripperPolicy is a trivial
+// always-succeed implementation for simulation/playback.
 #ifndef MR_PLANNER_POLICY_H
 #define MR_PLANNER_POLICY_H
 
 #include "mr_planner/core/task.h"
 #include "mr_planner/execution/tpg.h"
 
+/// Abstract interface used by the ADG to execute policy (non-motion) nodes
+/// such as gripper actions, and to select/plan failure-recovery skills.
+/// Recovery hooks have throwing defaults, so subclasses only override what
+/// they support; execute() and update_joint_states() are mandatory.
 class Policy {
 public:
+    /// Recovery skills that can be attempted after an execution failure.
     enum RecoverySkillType {
        RepickOther = 0,
        PickAgain = 1,
@@ -16,6 +25,7 @@ public:
     };
 
     Policy() = default;
+    /// Execute the policy action between two ADG nodes; returns success.
     virtual bool execute(const std::shared_ptr<tpg::Node> &start_node,
                         const std::shared_ptr<tpg::Node> &end_node,
                         Activity::Type type) = 0;
@@ -36,6 +46,8 @@ public:
 };
 
 
+/// No-op policy: reports every gripper action as successful and ignores joint
+/// state updates. Suitable for simulation and visualization playback.
 class GripperPolicy: public Policy {
 public:
     GripperPolicy();

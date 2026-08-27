@@ -1,3 +1,5 @@
+// Header-only kd-tree nearest-neighbor index over packed joint vectors
+// (L1 metric), used by the RRT-family planners to avoid linear tree scans.
 #pragma once
 
 #include <cassert>

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""Generate and build an mr_planner VAMP robot plugin from URDF/SRDF: runs the
+cricket FK/CC code generator, emits the plugin C++/CMake sources, and compiles
+the plugin library."""
 
 import argparse
 import json

@@ -1,3 +1,7 @@
+// VampInstance<RobotTs...>: the SIMD-accelerated multi-robot collision backend.
+// Wraps VAMP's per-robot kernels and multi-robot composition (fkcc_multi_*) behind
+// the PlanInstance interface consumed by all planners, shortcutters, and TPG/ADG
+// construction. See the class documentation below for the design.
 #ifndef VAMP_INSTANCE_H
 #define VAMP_INSTANCE_H
 
@@ -18,6 +22,7 @@
 #endif
 
 #include <mr_planner/core/instance.h>
+#include <mr_planner/core/logger.h>
 
 #include <vamp/collision/environment.hh>
 #include <vamp/collision/attachments.hh>
@@ -39,6 +44,7 @@
 #include <optional>
 #include <new>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -60,6 +66,19 @@ struct MeshcatVisualizerOptions
     bool auto_flush{false};
 };
 
+/// Multi-robot planning environment backed by VAMP's SIMD collision kernels.
+///
+/// Each template parameter is a compiled VAMP robot type (e.g. vamp::robots::Panda);
+/// the pack defines a fixed team of robots, each with its own base transform,
+/// composed at collision-check time via vamp::collision::fkcc_multi_* (there is no
+/// fused multi-robot model). Implements the PlanInstance backend contract used by
+/// all planners: pose/motion/trajectory collision queries, distance/interpolation,
+/// sampling, attachments and movable objects, plus optional Meshcat visualization.
+///
+/// Because the fast SIMD path requires robot types at compile time while CBS/TPG
+/// query arbitrary robot subsets at runtime, the class precomputes per-index and
+/// per-pair function-pointer dispatch tables (see subset_*_dispatch_ members) that
+/// bridge runtime subset requests to the right template instantiation.
 template <typename... RobotTs>
 class VampInstance : public PlanInstance {
     static_assert(sizeof...(RobotTs) > 0, "VampInstance requires at least one robot type");
@@ -68,7 +87,9 @@ class VampInstance : public PlanInstance {
 
 public:
     using RobotTuple = std::tuple<RobotTs...>;
+    /// Number of robots in the team (the size of the template pack).
     static constexpr std::size_t kRobotCount = sizeof...(RobotTs);
+    /// SIMD lane width used by the VAMP kernels.
     static constexpr std::size_t kRake = vamp::FloatVectorWidth;
 
     VampInstance();
@@ -135,14 +156,20 @@ public:
                               bool self=true) override;
     bool setCollision(const std::string &obj_name, const std::string &link_name, bool allow) override;
 
+    /// L1 joint-space distance between two poses of the same robot.
     double computeDistance(const RobotPose &a, const RobotPose &b) const override;
     double computeDistance(const RobotPose &a, const RobotPose &b, int dim) const override;
+    /// Returns true when the straight-line motion a->b (same robot) is collision
+    /// free at col_step_size resolution. This is the planners' inner-loop edge check.
     bool connect(const RobotPose &a, const RobotPose &b, double col_step_size = 0.1, bool debug=false) override;
+    /// Moves from a toward b by at most max_dist; result holds the reached pose.
+    /// Returns true when the (possibly truncated) motion is collision free.
     bool steer(const RobotPose &a,
                const RobotPose &b,
                double max_dist,
                RobotPose &result,
                double col_step_size = 0.1) override;
+    /// Samples a uniform random configuration for the pose's robot (in place).
     bool sample(RobotPose &pose) override;
     RobotPose interpolate(const RobotPose &a, const RobotPose &b, double t) const override;
     double interpolate(const RobotPose &a, const RobotPose &b, double t, int dim) const override;
@@ -171,6 +198,8 @@ private:
     template <std::size_t Index>
     using RobotAt = std::tuple_element_t<Index, RobotTuple>;
 
+    /// Fixed-size view of one pose per robot slot (nullptr = robot not involved
+    /// in the query). Holds pointers into caller-owned poses; no copies.
     using PoseArray = std::array<const RobotPose *, kRobotCount>;
 
     using SubsetCollisionFn = bool (*)(const VampInstance &, const PoseArray &, bool);
@@ -202,6 +231,8 @@ private:
     static auto configurationBlockFromPose(const RobotPose &pose)
         -> typename Robot::template ConfigurationBlock<kRake>;
 
+    /// Maps a pose list to per-robot slots by robot_id (throws on out-of-range or
+    /// duplicate ids; with allow_partial=false also on missing robots).
     PoseArray gatherPoses(const std::vector<RobotPose> &poses, bool allow_partial) const;
 
     template <std::size_t Index>
@@ -621,6 +652,11 @@ private:
         return dst;
     }
 
+    // Runtime-subset dispatch tables: CBS/TPG check one robot or a pair at a
+    // time, but the SIMD path needs robot types at compile time. These tables
+    // hold function pointers to per-index / per-pair template instantiations so
+    // a runtime "check robots {i,j}" resolves in O(1). This is the hot path for
+    // CBS conflict checks and TPG type-2 edge discovery.
     static inline const auto subset_collision_single_dispatch_ =
         makeSingleSubsetDispatch<SubsetCollisionFn>(CollisionSingleFunctor{});
     static inline const auto subset_collision_pair_dispatch_ =
@@ -661,11 +697,12 @@ private:
     template <std::size_t Index>
     void rebuildCollisionFilterForRobot();
 
-    bool subsetCollisionSwitch(const PoseArray &poses, const std::vector<std::size_t> &active, bool self) const;
+    bool subsetCollisionSwitch(const PoseArray &poses, const std::size_t *active, std::size_t n_active, bool self) const;
     // Dispatches to the appropriate SIMD path and returns true if any waypoint collides.
     bool subsetMotionSwitch(const PoseArray &start,
                             const PoseArray &goal,
-                            const std::vector<std::size_t> &active,
+                            const std::size_t *active,
+                            std::size_t n_active,
                             double step_size,
                             bool self);
 
@@ -2051,9 +2088,10 @@ bool VampInstance<RobotTs...>::attachmentRobotCollidesWithRobotSpheres(
             {
                 if (std::string(dbg) == "1")
                 {
-                    std::cerr << "[VampInstance] attachment collision blocked between robot "
-                              << AttachmentRobotIndex << " attachment and " << other_robot_name << "::"
-                              << other_link_name << " (allowed entries=" << allowed.size() << ")\n";
+                    log("[VampInstance] attachment collision blocked between robot " +
+                            std::to_string(AttachmentRobotIndex) + " attachment and " + other_robot_name +
+                            "::" + other_link_name + " (allowed entries=" + std::to_string(allowed.size()) + ")",
+                        LogLevel::WARN);
                 }
             }
             return true;
@@ -2158,20 +2196,21 @@ bool VampInstance<RobotTs...>::fkccMultiAllWithAttachmentAllowances(
 
 template <typename... RobotTs>
 bool VampInstance<RobotTs...>::subsetCollisionSwitch(const PoseArray &poses,
-                                                     const std::vector<std::size_t> &active,
+                                                     const std::size_t *active,
+                                                     std::size_t n_active,
                                                      bool self) const
 {
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no robot poses provided");
     }
 
-    if (active.size() == kRobotCount)
+    if (n_active == kRobotCount)
     {
         throw std::logic_error("VampInstance: subsetCollisionSwitch should not handle full robot set");
     }
 
-    if (active.size() == 1)
+    if (n_active == 1)
     {
         const std::size_t idx = active[0];
         if (idx >= kRobotCount)
@@ -2186,7 +2225,7 @@ bool VampInstance<RobotTs...>::subsetCollisionSwitch(const PoseArray &poses,
         return fn(*this, poses, self);
     }
 
-    if (active.size() == 2)
+    if (n_active == 2)
     {
         std::size_t a = active[0];
         std::size_t b = active[1];
@@ -2217,21 +2256,19 @@ bool VampInstance<RobotTs...>::subsetCollisionSwitch(const PoseArray &poses,
 template <typename... RobotTs>
 bool VampInstance<RobotTs...>::subsetMotionSwitch(const PoseArray &start,
                                                   const PoseArray &goal,
-                                                  const std::vector<std::size_t> &active,
+                                                  const std::size_t *active,
+                                                  std::size_t n_active,
                                                   double step_size,
                                                   bool self)
 {
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no robot poses provided");
     }
 
-    auto sorted = active;
-   std::sort(sorted.begin(), sorted.end());
-
-    if (sorted.size() == 1)
+    if (n_active == 1)
     {
-        const std::size_t idx = sorted[0];
+        const std::size_t idx = active[0];
         if (idx >= kRobotCount)
         {
             throw std::out_of_range("VampInstance: robot index out of range");
@@ -2244,10 +2281,11 @@ bool VampInstance<RobotTs...>::subsetMotionSwitch(const PoseArray &start,
         return fn(*this, start, goal, step_size, self);
     }
 
-    if (sorted.size() == 2)
+    if (n_active == 2)
     {
-        const std::size_t a = sorted[0];
-        const std::size_t b = sorted[1];
+        // Only pairs are supported, so ordering reduces to a conditional swap.
+        const std::size_t a = std::min(active[0], active[1]);
+        const std::size_t b = std::max(active[0], active[1]);
         if (a == b || b >= kRobotCount)
         {
             throw std::invalid_argument("VampInstance: invalid robot pair selection");
@@ -2292,29 +2330,31 @@ bool VampInstance<RobotTs...>::checkCollision(const std::vector<RobotPose> &pose
 
     PoseArray gathered = gatherPoses(poses, true);
 
-    std::vector<std::size_t> active;
-    active.reserve(kRobotCount);
+    // Stack storage: this is the hottest call in the system, so avoid a heap
+    // allocation per collision check.
+    std::array<std::size_t, kRobotCount> active;
+    std::size_t n_active = 0;
     for (std::size_t idx = 0; idx < kRobotCount; ++idx)
     {
         if (gathered[idx] != nullptr)
         {
-            active.push_back(idx);
+            active[n_active++] = idx;
         }
     }
 
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no valid robot pose indices supplied");
     }
 
     bool is_collision_free = false;
-    if (active.size() == kRobotCount)
+    if (n_active == kRobotCount)
     {
         is_collision_free = checkCollisionPack(gathered, self, std::make_index_sequence<kRobotCount>{});
     }
     else
     {
-        is_collision_free = subsetCollisionSwitch(gathered, active, self);
+        is_collision_free = subsetCollisionSwitch(gathered, active.data(), n_active, self);
         ++num_collision_checks_;
     }
 
@@ -2715,8 +2755,9 @@ bool VampInstance<RobotTs...>::checkMultiRobotMotion(const std::vector<RobotPose
     auto start_gathered = gatherPoses(start, true);
     auto goal_gathered = gatherPoses(goal, true);
 
-    std::vector<std::size_t> active;
-    active.reserve(kRobotCount);
+    // Stack storage: this runs per edge check inside the planners' inner loops.
+    std::array<std::size_t, kRobotCount> active;
+    std::size_t n_active = 0;
     for (std::size_t idx = 0; idx < kRobotCount; ++idx)
     {
         const bool have_start = start_gathered[idx] != nullptr;
@@ -2729,16 +2770,16 @@ bool VampInstance<RobotTs...>::checkMultiRobotMotion(const std::vector<RobotPose
 
         if (have_start)
         {
-            active.push_back(idx);
+            active[n_active++] = idx;
         }
     }
 
-    if (active.empty())
+    if (n_active == 0)
     {
         throw std::invalid_argument("VampInstance: no robot poses provided for motion check");
     }
 
-    if (active.size() == kRobotCount)
+    if (n_active == kRobotCount)
     {
         return checkMotionPack(
             start_gathered,
@@ -2748,7 +2789,7 @@ bool VampInstance<RobotTs...>::checkMultiRobotMotion(const std::vector<RobotPose
             std::make_index_sequence<kRobotCount>{});
     }
 
-    return subsetMotionSwitch(start_gathered, goal_gathered, active, step_size, self);
+    return subsetMotionSwitch(start_gathered, goal_gathered, active.data(), n_active, step_size, self);
 }
 
 template <typename... RobotTs>
@@ -2985,9 +3026,38 @@ bool VampInstance<RobotTs...>::connect(const RobotPose &a,
     {
         throw std::invalid_argument("VampInstance: connect requested between different robots");
     }
+    if (a.robot_id < 0 || a.robot_id >= static_cast<int>(kRobotCount))
+    {
+        throw std::out_of_range("VampInstance: robot id out of range");
+    }
 
     const double step_size = (col_step_size > 0.0) ? col_step_size : 0.1;
-    return !checkMultiRobotMotion({a}, {b}, step_size, self);
+
+    // Single-robot fast path mirroring checkMultiRobotMotion({a}, {b}, ...):
+    // build the pose arrays directly instead of materializing two temporary
+    // std::vector<RobotPose> copies per edge check (this is the planners'
+    // inner-loop edge validation).
+    PoseArray start_gathered{};
+    PoseArray goal_gathered{};
+    start_gathered.fill(nullptr);
+    goal_gathered.fill(nullptr);
+    const auto idx = static_cast<std::size_t>(a.robot_id);
+    start_gathered[idx] = &a;
+    goal_gathered[idx] = &b;
+
+    if constexpr (kRobotCount == 1)
+    {
+        return !checkMotionPack(
+            start_gathered,
+            goal_gathered,
+            step_size,
+            self,
+            std::make_index_sequence<kRobotCount>{});
+    }
+    else
+    {
+        return !subsetMotionSwitch(start_gathered, goal_gathered, &idx, 1, step_size, self);
+    }
 }
 
 template <typename... RobotTs>
@@ -3863,51 +3933,52 @@ template <typename... RobotTs>
 void VampInstance<RobotTs...>::printKnownObjects() const
 {
     std::lock_guard<std::mutex> lock(objects_mutex_);
-    std::cout << "[VAMP] Robots:" << std::endl;
+    std::ostringstream oss;
+    oss << "[VAMP] Robots:" << "\n";
     for (std::size_t i = 0; i < robot_shadow_.size(); ++i)
     {
-        std::cout << "  [" << i << "] ";
+        oss << "  [" << i << "] ";
         if (i < robot_names_.size())
         {
-            std::cout << robot_names_[i];
+            oss << robot_names_[i];
         }
         else
         {
-            std::cout << "robot_" << i;
+            oss << "robot_" << i;
         }
 
         const RobotPose &pose = robot_shadow_[i];
         if (pose.joint_values.empty() && pose.hand_values.empty())
         {
-            std::cout << " (pose not set)" << std::endl;
+            oss << " (pose not set)" << "\n";
             continue;
         }
 
-        std::cout << " joints=[";
+        oss << " joints=[";
         for (std::size_t j = 0; j < pose.joint_values.size(); ++j)
         {
             if (j > 0U)
             {
-                std::cout << ", ";
+                oss << ", ";
             }
-            std::cout << pose.joint_values[j];
+            oss << pose.joint_values[j];
         }
-        std::cout << "]";
+        oss << "]";
 
         if (!pose.hand_values.empty())
         {
-            std::cout << " hand=[";
+            oss << " hand=[";
             for (std::size_t j = 0; j < pose.hand_values.size(); ++j)
             {
                 if (j > 0U)
                 {
-                    std::cout << ", ";
+                    oss << ", ";
                 }
-                std::cout << pose.hand_values[j];
+                oss << pose.hand_values[j];
             }
-            std::cout << "]";
+            oss << "]";
         }
-        std::cout << std::endl;
+        oss << "\n";
     }
 
     auto print_object_pose = [&](const Object &obj, const std::string &indent) {
@@ -3918,26 +3989,26 @@ void VampInstance<RobotTs...>::printKnownObjects() const
         {
             q.normalize();
         }
-        std::cout << indent << obj.name << " pos=("
-                  << t.x() << ", " << t.y() << ", " << t.z()
-                  << ") quat=(" << q.x() << ", " << q.y() << ", " << q.z() << ", " << q.w() << ")";
+        oss << indent << obj.name << " pos=("
+            << t.x() << ", " << t.y() << ", " << t.z()
+            << ") quat=(" << q.x() << ", " << q.y() << ", " << q.z() << ", " << q.w() << ")";
     };
 
     auto print_object_size = [&](const Object &obj) {
         switch (obj.shape)
         {
         case Object::Shape::Box:
-            std::cout << " size=(" << obj.length << ", " << obj.width << ", " << obj.height << ")";
+            oss << " size=(" << obj.length << ", " << obj.width << ", " << obj.height << ")";
             break;
         case Object::Shape::Cylinder:
-            std::cout << " radius=" << obj.radius << " length=" << obj.length;
+            oss << " radius=" << obj.radius << " length=" << obj.length;
             break;
         default:
             break;
         }
     };
 
-    std::cout << "[VAMP] Movable objects:" << std::endl;
+    oss << "[VAMP] Movable objects:" << "\n";
     for (const auto &name : movable_objects_)
     {
         const auto it = objects_.find(name);
@@ -3945,13 +4016,13 @@ void VampInstance<RobotTs...>::printKnownObjects() const
         {
             continue;
         }
-        std::cout << "  ";
+        oss << "  ";
         print_object_pose(it->second, "");
         print_object_size(it->second);
-        std::cout << " state=" << static_cast<int>(it->second.state) << std::endl;
+        oss << " state=" << static_cast<int>(it->second.state) << "\n";
     }
 
-    std::cout << "[VAMP] Attached objects:" << std::endl;
+    oss << "[VAMP] Attached objects:" << "\n";
     for (const auto &kv : objects_)
     {
         const Object &obj = kv.second;
@@ -3964,11 +4035,14 @@ void VampInstance<RobotTs...>::printKnownObjects() const
         const std::string robot_label = has_robot_name ?
                                             robot_names_[static_cast<std::size_t>(obj.robot_id)] :
                                             std::string("robot_") + std::to_string(obj.robot_id);
-        std::cout << "  ";
+        oss << "  ";
         print_object_pose(obj, "");
         print_object_size(obj);
-        std::cout << " attached_to=" << robot_label << " link=" << obj.parent_link << std::endl;
+        oss << " attached_to=" << robot_label << " link=" << obj.parent_link << "\n";
     }
+    // Explicitly requested diagnostic (Python print_known_objects / error paths):
+    // emit at INFO so it is visible at the default log level.
+    log(oss.str(), LogLevel::INFO);
 }
 
 template <typename... RobotTs>
@@ -4255,8 +4329,8 @@ void VampInstance<RobotTs...>::publishMeshcatScene()
     {
         const auto robot_count = msg["robot_spheres"].size();
         const auto obj_count = msg.isMember("objects") ? msg["objects"].size() : 0U;
-        std::cerr << "[meshcat] publishScene robots=" << robot_count
-                  << " objects=" << obj_count << std::endl;
+        log("[meshcat] publishScene robots=" + std::to_string(robot_count) +
+                " objects=" + std::to_string(obj_count), LogLevel::DEBUG);
     }
     sendMeshcatJson(msg);
     meshcat_dirty_ = false;
@@ -4304,12 +4378,12 @@ void VampInstance<RobotTs...>::connectMeshcat()
             meshcat_dirty_objects_.clear();
             meshcat_deleted_objects_.clear();
         }
-        std::cerr << "[meshcat] connected to " << meshcat_options_.host << ":" << meshcat_options_.port << std::endl;
+        log("[meshcat] connected to " + meshcat_options_.host + ":" + std::to_string(meshcat_options_.port), LogLevel::DEBUG);
     }
     catch (const std::exception &ex)
     {
         meshcat_connected_ = false;
-        std::cerr << "[meshcat] connection failed: " << ex.what() << std::endl;
+        log(std::string("[meshcat] connection failed: ") + ex.what(), LogLevel::WARN);
     }
 }
 
@@ -4432,13 +4506,13 @@ void VampInstance<RobotTs...>::runMeshcatWorker()
             boost::asio::write(meshcat_socket_, boost::asio::buffer(payload.data(), payload.size()));
             if (meshcat_debug_)
             {
-                std::cerr << "[meshcat] sent " << payload.size() << " bytes (async)\n";
+                log("[meshcat] sent " + std::to_string(payload.size()) + " bytes (async)", LogLevel::DEBUG);
             }
         }
         catch (const std::exception &ex)
         {
             meshcat_connected_ = false;
-            std::cerr << "[meshcat] async send failed: " << ex.what() << std::endl;
+            log(std::string("[meshcat] async send failed: ") + ex.what(), LogLevel::WARN);
         }
     }
 }

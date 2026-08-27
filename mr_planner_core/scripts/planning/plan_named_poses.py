@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Plan multi-robot motions between SRDF named poses using mr_planner_core,
+optionally playing back the result in Meshcat."""
 
 import argparse
 import json

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Inspect mr_planner portable TPG/ADG protobuf graph files: summarize them,
+run topological checks, and export node-level or activity-level DOT plots."""
 
 import argparse
 import heapq

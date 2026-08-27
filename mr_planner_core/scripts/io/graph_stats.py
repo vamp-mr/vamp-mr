@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""Print a machine-readable JSON summary (robots, nodes, type-2 edges,
+flowtime/makespan, activities) of an mr_planner portable TPG/ADG protobuf
+graph file."""
 
 import argparse
 import json

@@ -151,16 +151,12 @@ bool PlanInstance::checkMultiRobotMotion(const std::vector<RobotPose> &start,
 
     const double effective_step = (step_size > 0.0) ? step_size : 0.1;
 
-    std::unordered_map<int, RobotPose> start_map;
-    start_map.reserve(start.size());
-    for (const auto &pose : start) {
-        start_map[pose.robot_id] = pose;
-    }
-
+    // Pair start/goal poses by robot id with a linear scan (robot counts are
+    // small), holding pointers into the caller's vectors instead of copying
+    // poses; this runs inside the planners' edge-validation loops.
     struct PosePair {
-        RobotPose start;
-        RobotPose goal;
-        double distance{0.0};
+        const RobotPose *start;
+        const RobotPose *goal;
     };
 
     std::vector<PosePair> pairs;
@@ -168,14 +164,15 @@ bool PlanInstance::checkMultiRobotMotion(const std::vector<RobotPose> &start,
 
     double max_distance = 0.0;
     for (const auto &goal_pose : goal) {
-        auto it = start_map.find(goal_pose.robot_id);
-        if (it == start_map.end()) {
+        auto it = std::find_if(start.begin(), start.end(), [&](const RobotPose &pose) {
+            return pose.robot_id == goal_pose.robot_id;
+        });
+        if (it == start.end()) {
             throw std::invalid_argument("Goal pose set is missing a matching start pose");
         }
 
-        PosePair pair{it->second, goal_pose, computeDistance(it->second, goal_pose)};
-        max_distance = std::max(max_distance, pair.distance);
-        pairs.emplace_back(std::move(pair));
+        max_distance = std::max(max_distance, computeDistance(*it, goal_pose));
+        pairs.push_back(PosePair{&(*it), &goal_pose});
     }
 
     if (max_distance <= std::numeric_limits<double>::epsilon()) {
@@ -198,7 +195,7 @@ bool PlanInstance::checkMultiRobotMotion(const std::vector<RobotPose> &start,
         const double t = static_cast<double>(step) / static_cast<double>(step_count);
         interpolated.clear();
         for (const auto &pair : pairs) {
-            interpolated.emplace_back(interpolate(pair.start, pair.goal, t));
+            interpolated.emplace_back(interpolate(*pair.start, *pair.goal, t));
         }
 
         if (checkCollision(interpolated, self)) {

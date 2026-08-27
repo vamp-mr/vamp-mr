@@ -1,3 +1,6 @@
+// Probabilistic roadmap (PRM) single-robot planner: samples a roadmap, connects
+// neighbors, and answers start/goal queries with time-aware A* search subject to
+// CBS constraints.
 #ifndef MR_PLANNER_PRM_H
 #define MR_PLANNER_PRM_H
 

@@ -1,3 +1,5 @@
+// Roadmap resampler: when a PRM roadmap does not connect start and goal, grows
+// an RRT between them and folds the resulting path back into the roadmap.
 #ifndef MR_PLANNER_RESAMPLER_H
 #define MR_PLANNER_RESAMPLER_H
 

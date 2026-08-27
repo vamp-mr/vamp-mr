@@ -1,3 +1,7 @@
+// Task-level plan representation: Activity (one typed robot action), ObjectNode
+// (movable object with attach/detach events), SetCollisionNode (collision
+// overrides), and ActivityGraph (per-robot activity sequences with inter-robot
+// dependencies). Consumed by the ADG for dependency-aware execution.
 #ifndef MR_PLANNER_TASK_H
 #define MR_PLANNER_TASK_H
 
@@ -7,6 +11,10 @@ class ObjectNode;
 class SetCollisionNode;
 typedef std::shared_ptr<ObjectNode> ObjPtr;
 
+/// One typed action of a single robot (e.g. pick, drop, handover, gripper).
+/// Holds start/end poses, type-1 edges (sequential order within the same
+/// robot) and type-2 edges (dependencies on other robots' activities), plus
+/// object attach/detach events and collision-override requests at its onset.
 class Activity {
 public:
     friend class boost::serialization::access;
@@ -99,6 +107,10 @@ public:
 typedef std::shared_ptr<Activity> ActPtr;
 
 
+/// A movable (or fixed) scene object in the activity graph, linked to the
+/// activity that detaches it from its previous parent (prev_detach) and the
+/// activity that attaches it next (next_attach). Each attach/detach cycle of
+/// the same physical object gets its own ObjectNode.
 class ObjectNode {
 public:
     template<class Archive>
@@ -131,6 +143,8 @@ public:
     std::shared_ptr<Activity> next_attach;
 };
 
+/// Request to allow or disallow collision checking between an object and a
+/// robot link, applied at the onset of the activity that carries it.
 class SetCollisionNode {
 public:
     template<class Archive>
@@ -150,6 +164,9 @@ public:
 };
 
 
+/// Task-level graph over all robots: one ordered activity sequence per robot,
+/// inter-robot type-2 dependency edges, and the object nodes manipulated along
+/// the way. Built by task planners and used to construct/execute an ADG.
 class ActivityGraph {
     friend class boost::serialization::access;
     template <class Archive>
@@ -165,6 +182,8 @@ public:
 
     ActivityGraph(const ActivityGraph &other, int first_n_tasks);
     
+    /// Append a new activity to a robot's sequence (optionally with a
+    /// type-2 dependency on another robot's activity).
     ActPtr add_act(int robot_id, Activity::Type type);
 
     ActPtr add_act(int robot_id, Activity::Type type, ActPtr type2_dep);
@@ -211,6 +230,8 @@ public:
     std::vector<ObjPtr> get_end_obj_nodes() const;
     std::vector<ObjPtr> get_unused_obj_nodes() const;
 
+    /// Breadth-first traversal from act_i over type-1/type-2 edges, marking
+    /// visited[robot][act]; forward follows successors, otherwise predecessors.
     bool bfs(ActPtr act_i, std::vector<std::vector<bool>> &visited, bool forward) const;
 
     std::vector<ObjPtr> find_indep_obj(ActPtr act) const;
@@ -225,6 +246,8 @@ private:
 };
 
 
+/// Concatenate per-task synchronized solutions into a single synchronized
+/// multi-robot trajectory sampled at dt, tagging waypoints with activity ids.
 void concatSyncSolution(std::shared_ptr<PlanInstance> instance,
                         std::shared_ptr<ActivityGraph> act_graph,
                         const std::vector<MRTrajectory> &solutions,

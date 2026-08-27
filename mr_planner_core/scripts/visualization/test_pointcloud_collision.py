@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""Sanity test for VAMP multi-robot pointcloud collision checking: builds a
+synthetic sphere pointcloud around a robot link, filters it, and verifies
+collision results, with optional Meshcat visualization."""
 
 import argparse
 import json

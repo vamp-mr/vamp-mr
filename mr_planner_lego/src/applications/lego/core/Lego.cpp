@@ -1,4 +1,9 @@
+// This file is derived from APEX-MR (https://github.com/intelligent-control-lab/APEX-MR),
+// Copyright (c) 2025 Intelligent Control Lab, licensed under the MIT License.
+// See THIRD_PARTY_LICENSES.md for the full license text.
+// Modifications for VAMP-MR: ROS-free integration with the mr_planner_core planning engine.
 #include "mr_planner/applications/lego/lego/Lego.hpp"
+#include <mr_planner/core/logger.h>
 #include <algorithm>
 #include <cctype>
 #include <stdexcept>
@@ -53,7 +58,6 @@ Eigen::MatrixXd EigenVcat(const Eigen::MatrixXd& mat1, const Eigen::MatrixXd& ma
      * [mat1; mat2]
      */
 
-    std::cout << "start vcat" << std::endl;
     try
     {
         if (mat1.rows() == 0){
@@ -73,7 +77,6 @@ Eigen::MatrixXd EigenVcat(const Eigen::MatrixXd& mat1, const Eigen::MatrixXd& ma
             Eigen::MatrixXd new_mat(mat1.rows()+mat2.rows(), mat1.cols());
             new_mat.topRows(mat1.rows()) = mat1;
             new_mat.bottomRows(mat2.rows()) = mat2;
-            std::cout << "finished vcat" << std::endl;
             return new_mat;
         } 
     }
@@ -166,7 +169,6 @@ Eigen::MatrixXd LoadMatFromFile(const std::string fname)
 {
     try
     {
-        std::cout << "start loading mat from file: " << fname << std::endl;
         std::ifstream file(fname);
         if (!file.is_open())
         {
@@ -174,7 +176,6 @@ Eigen::MatrixXd LoadMatFromFile(const std::string fname)
             ss << "Cannot open file " << fname;
             throw std::runtime_error(ss.str());
         }
-        std::cout << "File opened successfully" << std::endl;
 
         std::vector<double> values;
         std::size_t rows = 0;
@@ -231,7 +232,6 @@ Eigen::MatrixXd LoadMatFromFile(const std::string fname)
 
         if (rows == 0 || cols == 0)
         {
-            std::cout << "Loaded empty mat from [" << fname << "]" << std::endl;
             return Eigen::MatrixXd(0, 0);
         }
 
@@ -248,9 +248,6 @@ Eigen::MatrixXd LoadMatFromFile(const std::string fname)
             static_cast<Eigen::Index>(rows), static_cast<Eigen::Index>(cols));
         std::copy(values.begin(), values.end(), row_major_mat.data());
         Eigen::MatrixXd mat = row_major_mat;
-
-        std::cout << "Loaded mat of shape [" << mat.rows()
-                    << ", " << mat.cols() << "] from [" << fname << "]" << std::endl;
 
         return mat;
     }
@@ -274,9 +271,6 @@ void SaveMatToFile(const Eigen::MatrixXd& mat, const std::string& fname)
         Eigen::IOFormat fmt(Eigen::FullPrecision, Eigen::DontAlignCols, ",", "\n", "", "", "", "");
         file << mat.format(fmt);
         file.close();
-
-        std::cout << "Wrote mat of shape [" << mat.rows()
-                    << ", " << mat.cols() << "] to [" << fname << "]\n";
     }
     catch(const std::exception& e)
     {
@@ -372,7 +366,6 @@ void Lego::setup(const std::string& env_setup_fname,
     {
         default_robot_dof_ = robots_.front().dof;
     }
-    print_manipulation_property();
     config_file >> config_;
     lego_lib_file >> lego_library_;
     Json::Value plate_calib;
@@ -491,7 +484,7 @@ void Lego::setup(const std::string& env_setup_fname,
         }
         else
         {
-            std::cout << "Unknown brick type: " << brick.name() << " !" << std::endl;
+            log("Unknown brick type: " + brick.name() + " !", LogLevel::ERROR);
             continue;
         }
         // brick_pose.pose.position.x = x;
@@ -574,9 +567,7 @@ void Lego::brick_dimension_from_name(const std::string& b_name, int& height, int
 
 void Lego::set_world_base(const std::string& world_base_fname)
 {
-    std::cout << "Load World Base from: " << world_base_fname << std::endl;
     auto base = io::LoadMatFromFile(world_base_fname);
-    std::cout << "Returned from LoadMatFromFile\n in set world base" << std::endl;
     if (base.rows() !=4 || base.cols() !=4)
     {
         throw std::runtime_error("World base frame should be a 4x4 matrix!");
@@ -610,7 +601,6 @@ void Lego::set_robot_base(const std::vector<std::string>& base_fnames)
     }
     for (std::size_t idx = 0; idx < base_fnames.size(); ++idx)
     {
-        std::cout << "Load Robot " << idx + 1 << " Base from: " << base_fnames[idx] << std::endl;
         auto base = io::LoadMatFromFile(base_fnames[idx]);
         if (base.rows() != 4 || base.cols() != 4)
         {
@@ -623,27 +613,32 @@ void Lego::set_robot_base(const std::vector<std::string>& base_fnames)
 
 void Lego::print_manipulation_property()
 {
+    std::ostringstream message;
     for (std::size_t idx = 0; idx < robots_.size(); ++idx)
     {
-        std::cout << "\nRobot " << idx + 1 << " Base: \n" << robots_[idx].base_frame << std::endl;
-        std::cout << "\nRobot " << idx + 1 << " DH: \n" << robots_[idx].dh << std::endl;
+        message << "\nRobot " << idx + 1 << " Base: \n" << robots_[idx].base_frame;
+        message << "\nRobot " << idx + 1 << " DH: \n" << robots_[idx].dh;
+
         const auto tool_idx = static_cast<std::size_t>(ToolMode::Tool);
         if (robots_[idx].tool_dh[tool_idx].size() > 0)
         {
-            std::cout << "\nRobot " << idx + 1 << " Tool DH: \n" << robots_[idx].tool_dh[tool_idx] << std::endl;
+            message << "\nRobot " << idx + 1 << " Tool DH: \n" << robots_[idx].tool_dh[tool_idx];
         }
         const auto assemble_idx = static_cast<std::size_t>(ToolMode::ToolAssemble);
         if (robots_[idx].tool_dh[assemble_idx].size() > 0)
         {
-            std::cout << "\nRobot " << idx + 1 << " Tool Assemble DH: \n" << robots_[idx].tool_dh[assemble_idx] << std::endl;
+            message << "\nRobot " << idx + 1 << " Tool Assemble DH: \n"
+                    << robots_[idx].tool_dh[assemble_idx];
         }
         const auto dis_idx = static_cast<std::size_t>(ToolMode::ToolDisassemble);
         if (robots_[idx].tool_dh[dis_idx].size() > 0)
         {
-            std::cout << "\nRobot " << idx + 1 << " Tool Disassemble DH: \n" << robots_[idx].tool_dh[dis_idx] << std::endl;
+            message << "\nRobot " << idx + 1 << " Tool Disassemble DH: \n"
+                    << robots_[idx].tool_dh[dis_idx];
         }
     }
-    std::cout << "\n" << std::endl;
+
+    log(message.str(), LogLevel::INFO);
 }
 
 void Lego::set_DH(const std::vector<std::string>& dh_fnames)
@@ -654,7 +649,6 @@ void Lego::set_DH(const std::vector<std::string>& dh_fnames)
     }
     for (std::size_t idx = 0; idx < dh_fnames.size(); ++idx)
     {
-        std::cout << "Load Robot " << idx + 1 << " DH from: " << dh_fnames[idx] << std::endl;
         robots_[idx].dh = io::LoadMatFromFile(dh_fnames[idx]);
         robots_[idx].dof = static_cast<int>(robots_[idx].dh.rows());
         Matrix4d flange = make_tool_frame_from_dh(robots_[idx].dh);
@@ -672,8 +666,6 @@ void Lego::set_DH_tool(const std::vector<std::string>& tool_fnames, ToolMode mod
     const std::size_t mode_idx = static_cast<std::size_t>(mode);
     for (std::size_t idx = 0; idx < tool_fnames.size(); ++idx)
     {
-        std::cout << "Load Robot " << idx + 1 << " DH for tool mode " << static_cast<int>(mode)
-                  << " from: " << tool_fnames[idx] << std::endl;
         robots_[idx].tool_dh[mode_idx] = io::LoadMatFromFile(tool_fnames[idx]);
         Matrix4d tool_frame = make_tool_frame_from_dh(robots_[idx].tool_dh[mode_idx]);
         robots_[idx].tool_inv[mode_idx] = math::PInv(tool_frame);
@@ -1408,7 +1400,7 @@ math::VectorJd Lego::IK(const math::VectorJd& cur_q, Matrix4dConstRef goal_T, co
     }
     else
     {
-        std::cout<<"IK failed condition 1"<<std::endl;
+        log("IK failed condition 1", LogLevel::WARN);
         status = false;
         return cur_q;
     }
@@ -1544,7 +1536,7 @@ math::VectorJd Lego::IK(const math::VectorJd& cur_q, Matrix4dConstRef goal_T, co
     }
     if(!status)
     {
-        std::cout<<"IK failed! No valid candidate."<<std::endl;
+        log("IK failed! No valid candidate.", LogLevel::WARN);
         return cur_q;
     }
 
@@ -1563,7 +1555,7 @@ void Lego::calc_brick_grab_pose(const std::string& name, const bool& assemble_po
 {
     if (brick_map_.find(name) == brick_map_.end())
     {
-        std::cout << "Brick " << name << " not found in the brick map!" << std::endl;
+        log("Brick " + name + " not found in the brick map!", LogLevel::WARN);
         return;
     }
     lego_brick l_brick = brick_map_[name];
@@ -1773,7 +1765,7 @@ std::string Lego::get_brick_name_by_id(const int& id, const int& seq_id)
     std::string brick_name = "b" + std::to_string(id) + "_" + std::to_string(seq_id);
     if(brick_map_.find(brick_name) == brick_map_.end())
     {
-        std::cout << "No available brick! ID: " << id << ", Seq ID: " << seq_id << std::endl;
+        log("No available brick! ID: " + std::to_string(id) + ", Seq ID: " + std::to_string(seq_id), LogLevel::WARN);
     }
     return brick_name;
 }
@@ -1783,7 +1775,7 @@ std::string Lego::get_brick_name_by_id(const int& id, const std::string& seq_id)
     std::string brick_name = "b" + std::to_string(id) + "_" + seq_id;
     if(brick_map_.find(brick_name) == brick_map_.end())
     {
-        std::cout << "No available brick! ID: " << id << ", Seq ID: " << seq_id << std::endl;
+        log("No available brick! ID: " + std::to_string(id) + ", Seq ID: " + seq_id, LogLevel::WARN);
     }
     return brick_name;
 }
@@ -1876,7 +1868,6 @@ bool Lego::is_bottom_connect(const lego_brick& b1, const lego_brick& b2)
 
 void Lego::update_brick_connection()
 {
-    auto start = high_resolution_clock::now();
     for(auto b1:brick_map_)
     {
         brick_map_[b1.second.brick_name].top_connect.clear();
@@ -1899,10 +1890,6 @@ void Lego::update_brick_connection()
             }
         }
     }
-    
-    auto stop = high_resolution_clock::now();
-    auto duration = duration_cast<microseconds>(stop - start);
-    std::cout << "\nUpdate brick connection time: " << duration.count() / 1000000.0 << " s" << std::endl;
 }
 
 

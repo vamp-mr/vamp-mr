@@ -1,3 +1,11 @@
+// This file is derived from APEX-MR (https://github.com/intelligent-control-lab/APEX-MR),
+// Copyright (c) 2025 Intelligent Control Lab, licensed under the MIT License.
+// See THIRD_PARTY_LICENSES.md for the full license text.
+// Modifications for VAMP-MR: ROS-free integration with the mr_planner_core planning engine.
+//
+// Core LEGO world model (ROS-free): tracks brick/plate poses and connectivity,
+// holds per-robot kinematics (DH parameters and tool frames per ToolMode), and
+// computes grasp/support/assembly poses and IK for dual-arm LEGO manipulation.
 #ifndef LEGO_HPP
 #define LEGO_HPP
 

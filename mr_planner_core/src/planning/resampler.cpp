@@ -58,32 +58,6 @@ bool Resampler::resample(const PlannerOptions &options) {
         addTrajToRoadmap(solution, options);
     }
 
-    /* Enlarge the edge radius of roadmap and add more edges
-    std::cout << "Resampling done, enlarging the roadmap edges..." << std::endl;
-    for (const auto &vertex : roadmap_->vertices) {
-        std::priority_queue<std::pair<double, std::shared_ptr<Vertex>>, std::vector<std::pair<double, std::shared_ptr<Vertex>>>, CompareEdge> nearest;
-        for (auto neighbor : roadmap_->vertices) {
-            double dist = instance_->computeDistance(vertex->pose, neighbor->pose);
-            if(vertex == neighbor || roadmap_->getNeighbors(vertex).find(neighbor) != roadmap_->getNeighbors(vertex).end()) {
-                continue;
-            }
-            nearest.push(std::make_pair(dist, neighbor));
-        }
-
-        int k = roadmap_->num_neighbors;
-        while (!nearest.empty() && k > 0) {
-            auto neighbor = nearest.top().second;
-            nearest.pop();
-            auto options_copy = options;
-            options_copy.max_dist = 2 * options.max_dist;
-            if (validateMotion(vertex, neighbor, options_copy) && roadmap_->getNeighbors(neighbor).size() < roadmap_->num_neighbors) {
-                roadmap_->addEdge(vertex, neighbor);
-                k--;
-            }
-        }
-    }
-    std::cout << "Roadmap edges enlarged." << std::endl;
-    */
     return true;
 }
 

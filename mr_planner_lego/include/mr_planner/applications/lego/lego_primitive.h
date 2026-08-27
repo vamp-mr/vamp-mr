@@ -1,3 +1,7 @@
+// Reusable dual-arm LEGO manipulation primitives built on a PlanInstance and
+// the Lego world model: computes IK goal sequences for pick/place/support/
+// handover motions and manages the collision-scene setup (object attach/
+// detach, allowed collisions) shared by planning and replanning.
 #ifndef LEGO_PRIMITIVE_H
 #define LEGO_PRIMITIVE_H
 
@@ -16,6 +20,10 @@ using vec3d = std::vector<std::vector<std::vector<T>>>;
 
 using vecgoal = std::vector<lego_manipulation::math::VectorJd>;
 
+/// Computes manipulation-primitive goal poses (pick, place, support, handover)
+/// for the dual-arm LEGO assembly task and applies the matching collision
+/// setups on the shared PlanInstance. Wraps the Lego model's kinematics/IK and
+/// caches common configurations (home, receive, handover, twist rotations).
 class LegoPrimitive {
 public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW

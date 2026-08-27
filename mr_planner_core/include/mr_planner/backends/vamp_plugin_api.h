@@ -1,3 +1,6 @@
+// C ABI for mr_planner VAMP collision-checking plugins. A plugin shared library
+// exports mr_planner_vamp_plugin_get_api(), returning an Api struct with the ABI
+// version, plugin name, and PlanInstance create/destroy functions.
 #pragma once
 
 #include <cstdint>

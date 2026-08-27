@@ -1,3 +1,6 @@
+// Preset VampInstance instantiations for the built-in multi-robot environments:
+// extern template declarations (compiled once in the core library) and type
+// aliases for GP4 pairs/quads and Panda teams of 2-10 arms.
 #ifndef VAMP_PRESETS_H
 #define VAMP_PRESETS_H
 

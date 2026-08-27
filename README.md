@@ -25,6 +25,25 @@ This codebase, VAMP-MR, is the collection of
 
 ## Installation
 
+### System dependencies (Ubuntu 20.04 / 22.04)
+
+The step-by-step build below assumes the following system packages are installed
+(this mirrors `docker/Dockerfile`):
+
+```bash
+sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+  build-essential ca-certificates cmake ninja-build pkg-config git \
+  python3 python3-dev python3-pip \
+  libboost-all-dev libeigen3-dev libjsoncpp-dev libompl-dev \
+  libprotobuf-dev protobuf-compiler libtbb-dev libyaml-cpp-dev
+```
+
+For meshcat visualization you additionally need the Python packages:
+
+```bash
+pip3 install meshcat numpy
+```
+
 ### Local Install Script (VAMP + core + LEGO)
 
 This installs to `/usr/local` by default (uses `sudo` if needed), and builds into:
@@ -236,6 +255,18 @@ Outputs:
 - `mr_planner_core/`: multi-robot planner core package
 - `mr_planner_lego/`: LEGO-specific integration / examples
 
+
+## License
+
+VAMP-MR is released under the [Apache License 2.0](LICENSE).
+
+It builds on and bundles third-party software:
+- A **modified** version of [VAMP](https://github.com/KavrakiLab/vamp) (Apache-2.0), shipped as the `vamp/` submodule, with an added multi-robot composite collision-checking layer.
+- LEGO assembly code under `mr_planner_lego/` **derived from** [APEX-MR](https://github.com/intelligent-control-lab/APEX-MR) (MIT).
+
+See [`NOTICE`](NOTICE) and [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for full attribution.
+
+## Citation
 
 If you found the research useful, please consider citing us in your research.
 

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""ROS-free multi-robot planning benchmark (composite RRT and CBS-PRM) via the
+mr_planner_core Python bindings, sweeping SRDF named-pose pairs per environment
+and writing per-query and summary CSV results."""
 
 import argparse
 import csv

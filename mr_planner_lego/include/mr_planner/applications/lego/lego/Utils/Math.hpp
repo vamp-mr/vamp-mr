@@ -1,3 +1,11 @@
+// This file is derived from APEX-MR (https://github.com/intelligent-control-lab/APEX-MR),
+// Copyright (c) 2025 Intelligent Control Lab, licensed under the MIT License.
+// See THIRD_PARTY_LICENSES.md for the full license text.
+// Modifications for VAMP-MR: ROS-free integration with the mr_planner_core planning engine.
+//
+// Math utilities for the LEGO utility layer: Eigen matrix/vector aliases, the
+// Pose struct (position + quaternion with 4x4 conversions), angle-unit macros,
+// and kinematics helpers (pseudo-inverse, matrix concatenation, DH-based FK).
 #ifndef LEGO_UTILS_MATH_HPP
 #define LEGO_UTILS_MATH_HPP
 
@@ -11,7 +19,7 @@
 #define DEG2RAD(angle) (static_cast<double>(angle)*M_PI/180.0)
 #define RAD2DEG(angle) (static_cast<double>(angle)/M_PI*180.0)
 
-#define N_JOINTS 6 // ruic: for now 6 joints
+#define N_JOINTS 6 // assumes 6-DOF arms
 
 namespace lego_manipulation
 {

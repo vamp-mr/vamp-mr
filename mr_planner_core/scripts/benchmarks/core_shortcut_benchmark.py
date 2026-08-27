@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+"""ROS-free trajectory shortcutting benchmark (Thompson selector) that reloads
+solution CSVs saved by core_planning_benchmark.py, re-runs shortcutting, and
+writes per-trajectory and summary CSV results."""
 
 import argparse
 import csv

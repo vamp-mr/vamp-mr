@@ -1,3 +1,6 @@
+// Composite-space RRT-Connect: plans for all robots jointly in the combined
+// configuration space, using the SIMD multi-robot collision checker for edge
+// validation and a kd-tree for nearest-neighbor queries.
 #ifndef MR_PLANNER_COMPOSITE_RRT_H
 #define MR_PLANNER_COMPOSITE_RRT_H
 

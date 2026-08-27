@@ -1,3 +1,6 @@
+// Header-only Meshcat playback helpers: steps a TPG/ADG schedule or a
+// synchronized multi-robot trajectory through a PlanInstance, moving robots
+// tick by tick with rate control so the Meshcat bridge is not overwhelmed.
 #pragma once
 
 #include <mr_planner/core/instance.h>

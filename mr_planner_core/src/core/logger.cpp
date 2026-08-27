@@ -143,6 +143,12 @@ void log(const MRTrajectory& traj, LogLevel level) {
     }
 }
 
+// Non-inline warning helper for voxel_grid.h, whose header cannot include
+// logger.h directly without creating an instance.h <-> logger.h include cycle.
+void logVoxelGridWarn(const std::string& message) {
+    log(message, LogLevel::WARN);
+}
+
 void logProgressFileStart(const std::string& filename) {
     if (filename != "") {
         std::ofstream ofs(filename, std::ofstream::out);

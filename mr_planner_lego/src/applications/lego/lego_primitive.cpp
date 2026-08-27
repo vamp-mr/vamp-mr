@@ -51,7 +51,7 @@ LegoPrimitive::LegoPrimitive(const std::shared_ptr<lego_manipulation::lego::Lego
             0, 0, 0, 1;
 
   if (check_stability) {
-    log("LegoPrimitive stability checking is currently disabled (TODO: integrate python-based stability client).",
+    log("LegoPrimitive stability checking is disabled in the ROS-free build.",
         LogLevel::WARN);
   }
 
@@ -783,7 +783,9 @@ bool LegoPrimitive::checkSupportNeeded(const Json::Value &cur_graph_node, int pr
   (void)press_side;
   (void)press_offset;
   (void)task_idx;
-  // TODO: Integrate a ROS-free stability checker (e.g., python RPC client) for deciding when support is required.
+  // Known limitation: stability checking is disabled in the ROS-free build, so
+  // this always reports that no support is needed (callers score such placements
+  // as if they were stable without scaffolding).
   return false;
 }
 
@@ -962,7 +964,7 @@ bool LegoPrimitive::findStableSupportPose(int press_side, int press_offset, cons
 
             // check stability
             if (reachable) {
-              // TODO: Add stability validation once we have a ROS-free stability checker.
+              // Known limitation: stability validation is disabled in the ROS-free build.
               {
                 log("Stability check disabled; accepting reachable support pose for task: " + std::to_string(task_idx) +
                         " at sup_x " + std::to_string(support_x) + " sup_y " + std::to_string(support_y) +
