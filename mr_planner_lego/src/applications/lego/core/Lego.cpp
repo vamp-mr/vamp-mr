@@ -366,7 +366,6 @@ void Lego::setup(const std::string& env_setup_fname,
     {
         default_robot_dof_ = robots_.front().dof;
     }
-    print_manipulation_property();
     config_file >> config_;
     lego_lib_file >> lego_library_;
     Json::Value plate_calib;
@@ -614,21 +613,32 @@ void Lego::set_robot_base(const std::vector<std::string>& base_fnames)
 
 void Lego::print_manipulation_property()
 {
+    std::ostringstream message;
     for (std::size_t idx = 0; idx < robots_.size(); ++idx)
     {
+        message << "\nRobot " << idx + 1 << " Base: \n" << robots_[idx].base_frame;
+        message << "\nRobot " << idx + 1 << " DH: \n" << robots_[idx].dh;
+
         const auto tool_idx = static_cast<std::size_t>(ToolMode::Tool);
         if (robots_[idx].tool_dh[tool_idx].size() > 0)
         {
+            message << "\nRobot " << idx + 1 << " Tool DH: \n" << robots_[idx].tool_dh[tool_idx];
         }
         const auto assemble_idx = static_cast<std::size_t>(ToolMode::ToolAssemble);
         if (robots_[idx].tool_dh[assemble_idx].size() > 0)
         {
+            message << "\nRobot " << idx + 1 << " Tool Assemble DH: \n"
+                    << robots_[idx].tool_dh[assemble_idx];
         }
         const auto dis_idx = static_cast<std::size_t>(ToolMode::ToolDisassemble);
         if (robots_[idx].tool_dh[dis_idx].size() > 0)
         {
+            message << "\nRobot " << idx + 1 << " Tool Disassemble DH: \n"
+                    << robots_[idx].tool_dh[dis_idx];
         }
     }
+
+    log(message.str(), LogLevel::INFO);
 }
 
 void Lego::set_DH(const std::vector<std::string>& dh_fnames)
@@ -1858,7 +1868,6 @@ bool Lego::is_bottom_connect(const lego_brick& b1, const lego_brick& b2)
 
 void Lego::update_brick_connection()
 {
-    auto start = high_resolution_clock::now();
     for(auto b1:brick_map_)
     {
         brick_map_[b1.second.brick_name].top_connect.clear();
@@ -1881,10 +1890,6 @@ void Lego::update_brick_connection()
             }
         }
     }
-    
-    auto stop = high_resolution_clock::now();
-    auto duration = duration_cast<microseconds>(stop - start);
-    (void)duration;
 }
 
 
